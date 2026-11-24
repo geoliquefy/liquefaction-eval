@@ -14,14 +14,14 @@ tests. The repository takes no issues or pull requests.
 |---|---|---|
 | `rulebook/RULEBOOK-V1-DRAFT-2026-11-15.md` | the rule book draft | unchanged |
 | `rulebook/RULEBOOK-V1-AMENDMENT-1-2026-11-24.md` | amendment 1: per-version values of `clip`, `tile_m` and `seed` (rule R2) | unchanged |
-| `scoreboard/` | the kit package `scoreboard.evalkit` and the 11 `scoreboard` modules it or its tests import | kit commit f77667a, tag `evalkit-v0.9.0` |
-| `tests/` | the kit's `test_evalkit_*.py` files and their fixtures | kit commit f77667a |
+| `scoreboard/` | the kit package `scoreboard.evalkit` and the 11 `scoreboard` modules it or its tests import | kit commit c052221, tag `evalkit-v0.10.0` |
+| `tests/` | the kit's `test_evalkit_*.py` files and their fixtures | kit commit c052221 |
 | `docs/scorecard-v2-2026-11-19/` | the sealed v2 card: `SCORECARD.md`, `scorecard.json`, `REGISTRATION.md`, review, build and render scripts, `SEAL.txt` | unchanged |
 
 ## The mirror differs from the kit commit in eight named places
 
 The kit repository is private. The mirror is refreshed at each tagged kit release. The first release held tag
-`evalkit-v0.6.0`. This one holds `evalkit-v0.9.0`: a subset of kit commit f77667a. These are the only differences:
+`evalkit-v0.6.0`. This one holds `evalkit-v0.10.0`: a subset of kit commit c052221. These are the only differences:
 
 1. Two files of the sealed v2 folder are held back: `build_v2-attempt1.log` and `build_v2-attempt2.log`. They are
    build logs. They contain machine paths from the build computer. `SEAL.txt` still lists their sha256 values. The
@@ -47,8 +47,8 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q tests
 ```
 
-Run from the repository root, without `-I`. On 2026-11-24 a clean environment with an empty home folder gave
-833 passed, 28 skipped, 0 failed. The 28 skips are the 25 named in `conftest.py` and 3 tests that need data outside
+Run from the repository root, without `-I`. On 2026-11-25 a clean environment with an empty home folder gave
+877 passed, 28 skipped, 0 failed. The 28 skips are the 25 named in `conftest.py` and 3 tests that need data outside
 this repository.
 
 ## Check the card hash

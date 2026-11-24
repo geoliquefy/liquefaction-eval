@@ -532,3 +532,37 @@ def test_entry_whose_second_run_differs_is_run_failed(setup, tmp_path):
     assert "noisy hook" not in rec["entries"] and len(rec["entries"]) == 3
     assert [d["name"] for d in rec["run_failed"]] == ["noisy hook"]
     assert not (setup["run"] / "predictions" / "A" / "noisy_hook.csv").exists()
+
+
+def test_score_writes_package_sha256_on_a_closed_task_from_the_frozen_inputs(setup, capsys):
+    """D5 follow-ups (wave 10): forward.score builds a closed task with package_sha256 (R2, R15)."""
+    from scoreboard.evalkit import package as P
+    from scoreboard.evalkit.spec import Task
+    run, _, _ = _two_types(setup)
+    _watch(setup)
+    try:
+        with pytest.raises(F.RunRefused, match="package_sha256 comes from the frozen inputs"):
+            F.score(run, setup["labels"], "A", {**TASK, "package_sha256": "3" * 64})
+    finally:
+        _OPENS["watch"] = None
+    assert _OPENS["seen"] == []                                  # the label path is never opened (review 1, Q11)
+    assert not [d for d in F.read_log(run) if d["step"] == "labels_opened"]      # refused before the label open
+    cards = {t: F.score(run, setup["labels"], t, TASK) for t in ("A", "B")}
+    for t, card in cards.items():
+        m = json.loads((run / "inputs" / t / "manifest.json").read_text())
+        table = run / "scores" / t / "package_table.csv"
+        rows, pkg = P.read_table(table)
+        assert rows == {m["shakemap"]["file"]: m["shakemap"]["sha256"], "cpt_list.csv": m["cpt_list"]["sha256"]}
+        assert card["task"]["division"] == "closed" and card["task"]["package_sha256"] == pkg
+        assert card["forward"]["package_sha256"] == pkg and card["forward"]["package_table"] == "package_table.csv"
+        assert card["task_sha256"] == Task.from_dict(card["task"]).sha256()
+        assert P.check_files(table, run / "inputs" / t)["status"] == "PASS"      # the frozen inputs check out
+        assert P.check_files(table, run / "inputs" / t)["not_in_table"] == ["manifest.json"]
+    assert cards["A"]["task"]["package_sha256"] != cards["B"]["task"]["package_sha256"]   # own inputs per type
+
+
+def test_score_on_an_open_task_names_no_package(setup):
+    run, _, _ = _two_types(setup)
+    card = F.score(run, setup["labels"], "A", {**TASK, "division": "open"})
+    assert "package_sha256" not in card["task"] and card["forward"]["package_sha256"] is None
+    assert not (run / "scores" / "A" / "package_table.csv").exists()

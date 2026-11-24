@@ -1,0 +1,11 @@
+{
+ "about": "R2 task fields pinned per card version. Copied from rule book v1 amendment 1, section 4 (founder ruling 52c), pillar docs/evals/RULEBOOK-V1-AMENDMENT-1-2026-11-24.md, pillar commit a82c28f. A task cannot choose these values; the task builder takes them from here and refuses a caller value that differs. This file changes only when a new rule book amendment changes that table.",
+ "source": "docs/evals/RULEBOOK-V1-AMENDMENT-1-2026-11-24.md section 4 (pillar a82c28f)",
+ "pinned_fields": ["clip", "tile_m", "seed", "tile_rule"],
+ "card_versions": {
+  "v2": {"clip": 1e-06, "tile_m": 4000.0, "seed": 20261106, "tile_rule": "fixed"},
+  "v3": {"clip": 1e-06, "tile_m": 4000.0, "seed": 20261106, "tile_rule": "fixed"},
+  "v3.1": {"clip": 1e-06, "tile_m": 4000.0, "seed": 20261106, "tile_rule": "fixed"},
+  "later": {"clip": 1e-06, "tile_m": 4000.0, "seed": 20261106, "tile_rule": "fixed"}
+ }
+}

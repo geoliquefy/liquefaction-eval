@@ -106,6 +106,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import package as _package
 from . import register as _register
 from . import shaking
 from .spec import (Entry, EntryManifest, SpecError, Task, canonical_json, entry_sha256, load_entry,
@@ -835,6 +836,14 @@ def score(run_dir: str | Path, labels_path: str | Path, input_type: str, task_pa
 
     `task_params` gives the task fields the runner cannot know (TASK_FIELDS_FROM_CALLER, plus optional Task fields
     such as n_boot or min_sites); event id, site list hash and track ("forward") come from the frozen inputs.
+    On the closed division (the default) the package hash comes from the frozen inputs too (R2, R15; D5 follow-ups,
+    wave 10): the package table (evalkit.package kit form) holds this type's two frozen input files, the ShakeMap grid
+    and cpt_list.csv, with the sha256 the input manifest froze; package_sha256 is the sha256 of that table. The table
+    is written as `scores/<type>/package_table.csv`, so `python -m scoreboard.evalkit.package check` can check the
+    frozen inputs against it. An open task names no package hash.
+    Limit (D5 follow-ups review 1): clip, tile_m and seed still come from the caller, not from task_pins.json
+    (rule book v1 amendment 1); this runner does not refuse a value that differs from the pins. Filling them from
+    task_builder.load_pins waits for the go on amendment 1 section 5.3 point 4.
     Returns the card (evalkit.card.build_card) with a `forward` block naming the input type and every hash."""
     from .card import build_card  # late import: the card module is heavy and not needed to freeze or predict
 
@@ -848,12 +857,18 @@ def score(run_dir: str | Path, labels_path: str | Path, input_type: str, task_pa
     missing = [k for k in TASK_FIELDS_FROM_CALLER if k not in task_params]
     if missing:
         raise RunRefused(f"task_params: missing {missing}")
-    for k in ("event_id", "site_list_sha256", "track"):
+    for k in ("event_id", "site_list_sha256", "track", "package_sha256"):
         if k in task_params:
             raise RunRefused(f"task_params: {k} comes from the frozen inputs, not the caller")
+    division = task_params.get("division", "closed")
+    pkg = {}
+    if division == "closed":                             # R2, R15: a closed task names its package hash
+        pkg_rows = {manifest[k]["file"]: manifest[k]["sha256"] for k in ("shakemap", "cpt_list")}
+        pkg_text = _package.table_text(pkg_rows)
+        pkg = {"package_sha256": _package.table_sha256_of_rows(pkg_rows)}
     task = Task.from_dict({**task_params, "event_id": manifest["event"]["id"],
                            "site_list_sha256": manifest["cpt_list"]["site_list_sha256"], "track": "forward",
-                           "division": task_params.get("division", "closed")})
+                           "division": division, **pkg})
     raw = Path(labels_path).read_bytes()                 # first open of the label file
     lh = _sha_bytes(raw)
     first = [d for d in read_log(run_dir) if d["step"] == "labels_opened"]
@@ -868,8 +883,18 @@ def score(run_dir: str | Path, labels_path: str | Path, input_type: str, task_pa
                        "input_manifest_sha256": mh, "predictions_sha256": _sha_json(rec),
                        "late": rec.get("late", []), "run_failed": rec.get("run_failed", []),
                        "register_skipped": rec.get("register_skipped"),
-                       "labels_file_sha256": lh, "scored_apart": "type A and type B are separate cards, never pooled"}
+                       "labels_file_sha256": lh, "scored_apart": "type A and type B are separate cards, never pooled",
+                       "package_sha256": task.package_sha256,
+                       "package_table": "package_table.csv" if task.package_sha256 else None}
     out.mkdir(parents=True, exist_ok=True)
+    if task.package_sha256:
+        tp = out / "package_table.csv"
+        try:
+            with open(tp, "x", encoding="utf-8", newline="") as f:
+                f.write(pkg_text)
+        except FileExistsError:                          # left by a run stopped before its card: same bytes only
+            if tp.read_bytes() != pkg_text.encode("utf-8"):
+                raise RunRefused(f"type {t}: {tp} exists with other bytes; a package table is never replaced")
     with open(out / "card.json", "x", encoding="utf-8") as f:   # "x": never overwrite a card
         f.write(json.dumps(card, indent=1, sort_keys=True, default=_json_default) + "\n")
     _append(run_dir, "scored", t, _sha_file(out / "card.json"))
