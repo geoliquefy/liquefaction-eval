@@ -2,7 +2,7 @@
 
 The tests below read private driver scripts or a private data-source list that
 this read-only mirror does not hold. They are skipped here, by name, with the
-reason. Every other kit test file is byte-identical to kit commit bacbdd1.
+reason. Every other kit test file is byte-identical to kit commit f77667a.
 """
 import pytest
 
@@ -26,6 +26,10 @@ _SKIP = {
     "tests/test_evalkit_parity_round3.py::test_runner_published_constant_matches_its_header_and_the_registration": _SCRIPT,
     "tests/test_evalkit_d8_predictions_v3.py::test_driver_predict_v3_step_names_no_label_path": _SCRIPT,
     "tests/test_evalkit_d8_predictions_v3.py::test_driver_stamp_plan_names_v3_first": _SCRIPT,
+    "tests/test_evalkit_d8_score.py::test_changed_label_sha_stops_before_any_parse": _SCRIPT,
+    "tests/test_evalkit_d8_score.py::test_existing_output_with_a_metric_refuses_the_run": _SCRIPT,
+    "tests/test_evalkit_d8_score.py::test_kit_loads_from_this_worktree": _SCRIPT,
+    "tests/test_evalkit_d8_score.py::test_module_has_no_em_dashes": _SCRIPT,
     "tests/test_evalkit_graderkit.py::test_pillar_sources_carry_notice_quality_and_dec_flag":
         "reads a private data-source list that this mirror does not hold",
 }
