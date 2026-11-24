@@ -182,7 +182,7 @@ def test_intake_checks_the_entry_schema(tmp_path):
     with pytest.raises(SpecError, match="duplicate"):
         reg.submit_entry(r, tmp_path / "dup.json", now=clock())
     (tmp_path / "lone.json").write_text(mp.read_text())
-    with pytest.raises(SpecError, match="no matching"):
+    with pytest.raises(SpecError, match="no predictions file found.*lone.csv.*--csv"):
         reg.submit_entry(r, tmp_path / "lone.json", now=clock())
     assert not r.exists() or r.read_text() == ""                 # a refused entry writes no line (open R20 gap)
 
@@ -193,7 +193,8 @@ def test_receipt_finds_other_entry_files_and_bad_receipts(tmp_path):
     rec = reg.submit_entry(r, mp, now=clock())
     other, _ = write_entry(tmp_path, "e1", seed=1)
     res = reg.verify_receipt(r, rec, entry_sha=reg.entry_file_sha256(other))
-    assert res["status"] == reg.REGISTER_FAULT and any("entry files in hand" in x for x in res["reasons"])
+    # files in hand that differ, on an intact register: ENTRY MISMATCH, not REGISTER FAULT (D5 point 11)
+    assert res["status"] == reg.ENTRY_MISMATCH and any("entry files in hand" in x for x in res["reasons"])
     forged = dict(rec, entry_sha256="b" * 64)
     assert reg.verify_receipt(r, forged)["status"] == reg.REGISTER_FAULT
     with pytest.raises(reg.RegisterError):

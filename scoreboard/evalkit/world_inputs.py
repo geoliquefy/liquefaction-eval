@@ -379,21 +379,34 @@ def _fmt(v: float) -> str:
     return "" if not np.isfinite(v) else repr(round(float(v), 12))
 
 
+def prediction_file_name(model: str, pga_variant: str) -> str:
+    """The file name write_predictions gives one model on one PGA variant."""
+    slug = "".join(c if c.isalnum() else "-" for c in model).strip("-").lower()
+    return f"{slug}__{pga_variant}.csv"
+
+
+def prediction_texts(case_ids, preds: dict, pga_variant: str) -> dict:
+    """{file name: (text, manifest row)} for each model, in memory: the exact bytes write_predictions writes."""
+    out = {}
+    for model, v in preds.items():
+        text = "case_id,value\n" + "".join(f"{c},{_fmt(x)}\n" for c, x in zip(case_ids, v))
+        spec = MODELS[model]
+        out[prediction_file_name(model, pga_variant)] = (text, {
+            "model": model, "pga_variant": pga_variant, "sha256": sha_bytes(text.encode()),
+            "n_rows": int(len(v)), "n_values": int(np.isfinite(v).sum()), "house": spec["house"],
+            "output_kind": spec["output_kind"], "rule": spec["rule"],
+            "exposure_column": spec["exposure_col"], "chain_id": spec.get("chain")})
+    return out
+
+
 def write_predictions(out_dir: str | Path, case_ids, preds: dict, pga_variant: str) -> dict:
     """One CSV per model (case_id,value). Returns the manifest rows for these files."""
     d = Path(out_dir)
     d.mkdir(parents=True, exist_ok=True)
     rows = {}
-    for model, v in preds.items():
-        slug = "".join(c if c.isalnum() else "-" for c in model).strip("-").lower()
-        name = f"{slug}__{pga_variant}.csv"
-        text = "case_id,value\n" + "".join(f"{c},{_fmt(x)}\n" for c, x in zip(case_ids, v))
+    for name, (text, row) in prediction_texts(case_ids, preds, pga_variant).items():
         (d / name).write_text(text, encoding="utf-8")
-        spec = MODELS[model]
-        rows[name] = {"model": model, "pga_variant": pga_variant, "sha256": sha_bytes(text.encode()),
-                      "n_rows": int(len(v)), "n_values": int(np.isfinite(v).sum()), "house": spec["house"],
-                      "output_kind": spec["output_kind"], "rule": spec["rule"],
-                      "exposure_column": spec["exposure_col"], "chain_id": spec.get("chain")}
+        rows[name] = row
     return rows
 
 
@@ -451,6 +464,32 @@ def superseded_inputs_sha256(inputs_dir: str | Path) -> set[str]:
     return out
 
 
+def superseded_predictions_sha256(pred_dir: str | Path) -> set[str]:
+    """sha256 of every predictions manifest named superseded in pred_dir: the hashes each SUPERSEDED*.txt note names
+    before "SUPERSEDED by", and each PREDICTIONS-MANIFEST*.json's `supersedes` entries (`manifest` and `manifests`).
+    Empty when nothing is superseded."""
+    import re
+    d = Path(pred_dir)
+    out: set[str] = set()
+    for note in sorted(d.glob("SUPERSEDED*.txt")):
+        if note.name == "SUPERSEDED-INPUTS.txt":
+            continue
+        head = note.read_text(encoding="utf-8").split("SUPERSEDED by", 1)[0]
+        out |= set(re.findall(r"\b[0-9a-f]{64}\b", head))
+    for mp in sorted(d.glob("PREDICTIONS-MANIFEST*.json")):
+        try:
+            sup = json.loads(mp.read_text()).get("supersedes") or {}
+        except (ValueError, AttributeError):
+            continue
+        m = sup.get("manifest")
+        if isinstance(m, dict) and "sha256" in m:
+            out.add(m["sha256"])
+        ms = sup.get("manifests")
+        if isinstance(ms, dict):
+            out |= {v for v in ms.values() if isinstance(v, str)}
+    return out
+
+
 def stamp_plan(manifest_path: str | Path, inputs_dir: str | Path, *, run: bool = False, go: str = "",
                runner=subprocess.run) -> dict:
     """Return the OpenTimestamps command for the predictions manifest. Runs it only with run=True and a non-empty
@@ -458,8 +497,13 @@ def stamp_plan(manifest_path: str | Path, inputs_dir: str | Path, *, run: bool =
 
     inputs_dir: the inputs folder the predictions were built on. The plan is refused when the predictions manifest
     names no inputs manifest, names one not in inputs_dir, or names one a later inputs version supersedes (D8
-    Elbistan review 1, S1: such predictions still hold a withheld value)."""
+    Elbistan review 1, S1: such predictions still hold a withheld value). A predictions manifest that a later one in
+    the same folder supersedes is refused too (predictions v3, ruling 52a)."""
     p = Path(manifest_path)
+    ph = sha_file(p)
+    if ph in superseded_predictions_sha256(p.parent):
+        raise D8Refused(f"predictions manifest {p.name} (sha256 {ph}) is superseded by a later predictions manifest "
+                        f"in {p.parent.name}/; stamp the manifest that replaces it")
     ih = json.loads(p.read_text()).get("inputs_manifest_sha256")
     if not ih:
         raise D8Refused("the predictions manifest names no inputs manifest; not stamped")
@@ -538,13 +582,57 @@ def _read_value_csv(p: Path) -> tuple[list, list]:
     return ids, vals
 
 
+def zhu_ruling46_text(cases, zhu_grids: dict, shakemaps: dict, zv: np.ndarray) -> tuple[str, dict]:
+    """The ruling 46 split file text (case_id,value,reason) and its counts per earthquake, from the georef Zhu read
+    zv (run_zhu) and each earthquake's ShakeMap (PGA, PGV, SVEL at the nearest node). Refused when the split
+    disagrees with zv. Used by refreeze_zhu (predictions v2) and predict_v3, so both run the same code."""
+    from . import pgv as PGV
+    from . import zhu_cells
+    ids = cases["case_id"].tolist()
+    eq = cases["earthquake"].to_numpy()
+    rv = np.full(len(ids), np.nan)
+    reason = np.full(len(ids), "", dtype=object)
+    ruled = {}
+    lat_all, lon_all = cases["lat"].to_numpy(float), cases["lon"].to_numpy(float)
+    for name, g in sorted(zhu_grids.items()):
+        k = np.flatnonzero(eq == name)
+        if not k.size:
+            continue
+        ok = np.isfinite(lat_all[k]) & np.isfinite(lon_all[k])
+        kk = k[ok]
+        lo, la = lon_all[kk], lat_all[kk]
+        sm = shakemaps[name]
+        pga = PGV.sample_nearest(sm, "PGA", lo, la) / 100.0
+        pgv = PGV.sample_nearest(sm, "PGV", lo, la)
+        vs = PGV.sample_nearest(sm, "SVEL", lo, la)
+        v, why = zhu_cells.split_by_reason(g["x"], g["y"], g["model"], lo, la, pga, pgv, vs)
+        rv[kk], reason[kk] = v, why
+        reason[k[~ok]] = "NO COORDINATES"
+        ruled[name] = {"cases": int(k.size), "no_coordinates": int((~ok).sum()),
+                       **{r_: int((why == r_).sum()) for r_ in zhu_cells.REASONS},
+                       "model_zero_by_limit": {
+                           "pga": int(((why == zhu_cells.MODEL_ZERO) & np.isfinite(pga)
+                                       & (pga < zhu_cells.LIMITS["pga_g_below"])).sum()),
+                           "pgv": int(((why == zhu_cells.MODEL_ZERO) & np.isfinite(pgv)
+                                       & (pgv < zhu_cells.LIMITS["pgv_cms_below"])).sum()),
+                           "vs30": int(((why == zhu_cells.MODEL_ZERO) & np.isfinite(vs)
+                                        & (vs > zhu_cells.LIMITS["vs30_ms_above"])).sum())},
+                       "shakemap_sha256": sm.sha256,
+                       "shakemap_version_note": ZHU_SHAKEMAP_VERSION_NOTE.get(name, "same version as the "
+                                                                                   "ground-failure product")}
+        if not np.array_equal(np.isfinite(zv[kk]), why == zhu_cells.ON_GRID_VALUE) or not np.array_equal(
+                zv[kk][np.isfinite(zv[kk])], v[why == zhu_cells.ON_GRID_VALUE]):
+            raise D8Refused(f"{name}: the split disagrees with the refrozen read")
+    rtext = "case_id,value,reason\n" + "".join(f"{c},{_fmt(x)},{w}\n" for c, x, w in zip(ids, rv, reason))
+    return rtext, ruled
+
+
 def refreeze_zhu(inputs_dir: str | Path, pred_dir: str | Path, zhu_grids: dict, shakemaps: dict | None = None,
                  kit_commit: str = "") -> dict:
     """Rerun only USGS Zhu 2017 on the frozen inputs with georeferenced grids. Writes new files under new names and
     PREDICTIONS-MANIFEST-v2.json; never rewrites a file that exists. The 16 other files are checked byte for byte
     against the first manifest and carried over. shakemaps: {earthquake: evalkit.pgv.Grid} for the ruling 46 split
     (None skips the split file). Returns the comparison with the first Zhu file and the split counts (counts only)."""
-    from . import pgv as PGV
     from . import zhu_cells
     d = Path(pred_dir)
     m1p = d / PREDICTIONS_MANIFEST_V1
@@ -603,43 +691,11 @@ def refreeze_zhu(inputs_dir: str | Path, pred_dir: str | Path, zhu_grids: dict, 
     tot = {key: int(sum(r[key] for r in cmp.values())) for key in next(iter(cmp.values()))} if cmp else {}
     ruled = None
     if shakemaps is not None:
-        rv = np.full(len(ids), np.nan)
-        reason = np.full(len(ids), "", dtype=object)
-        ruled = {}
-        lat_all, lon_all = cases["lat"].to_numpy(float), cases["lon"].to_numpy(float)
-        for name, g in sorted(zhu_grids.items()):
-            k = np.flatnonzero(eq == name)
-            if not k.size:
-                continue
-            ok = np.isfinite(lat_all[k]) & np.isfinite(lon_all[k])
-            kk = k[ok]
-            lo, la = lon_all[kk], lat_all[kk]
-            sm = shakemaps[name]
-            pga = PGV.sample_nearest(sm, "PGA", lo, la) / 100.0
-            pgv = PGV.sample_nearest(sm, "PGV", lo, la)
-            vs = PGV.sample_nearest(sm, "SVEL", lo, la)
-            v, why = zhu_cells.split_by_reason(g["x"], g["y"], g["model"], lo, la, pga, pgv, vs)
-            rv[kk], reason[kk] = v, why
-            reason[k[~ok]] = "NO COORDINATES"
-            ruled[name] = {"cases": int(k.size), "no_coordinates": int((~ok).sum()),
-                           **{r_: int((why == r_).sum()) for r_ in zhu_cells.REASONS},
-                           "model_zero_by_limit": {
-                               "pga": int(((why == zhu_cells.MODEL_ZERO) & np.isfinite(pga)
-                                           & (pga < zhu_cells.LIMITS["pga_g_below"])).sum()),
-                               "pgv": int(((why == zhu_cells.MODEL_ZERO) & np.isfinite(pgv)
-                                           & (pgv < zhu_cells.LIMITS["pgv_cms_below"])).sum()),
-                               "vs30": int(((why == zhu_cells.MODEL_ZERO) & np.isfinite(vs)
-                                            & (vs > zhu_cells.LIMITS["vs30_ms_above"])).sum())},
-                           "shakemap_sha256": sm.sha256,
-                           "shakemap_version_note": ZHU_SHAKEMAP_VERSION_NOTE.get(name, "same version as the "
-                                                                                       "ground-failure product")}
-            if not np.array_equal(np.isfinite(zv[kk]), why == zhu_cells.ON_GRID_VALUE) or not np.array_equal(
-                    zv[kk][np.isfinite(zv[kk])], v[why == zhu_cells.ON_GRID_VALUE]):
-                raise D8Refused(f"{name}: the split disagrees with the refrozen read")
-        rtext = "case_id,value,reason\n" + "".join(f"{c},{_fmt(x)},{w}\n" for c, x, w in zip(ids, rv, reason))
+        rtext, ruled = zhu_ruling46_text(cases, zhu_grids, shakemaps, zv)
         writes[ZHU_RULED_FILE] = rtext
         files[ZHU_RULED_FILE] = {**base, "pga_variant": "usgs-grid-georef-2026-11-23-ruling46",
-                                 "sha256": sha_bytes(rtext.encode()), "n_values": int(np.isfinite(rv).sum()),
+                                 "sha256": sha_bytes(rtext.encode()),
+                                 "n_values": sum(1 for ln in rtext.splitlines()[1:] if _cell(ln) != ""),
                                  "rule": ZHU_RULED_RULE, "zhu_row_order": ZHU_REFREEZE_ROW_ORDER,
                                  "limits": zhu_cells.LIMITS, "limits_source": zhu_cells.LIMITS_SOURCE}
     not_run = dict(m1["not_run"])
@@ -781,3 +837,212 @@ def supersede_inputs(inputs_dir: str | Path, withheld: dict, *, check: dict, kit
         f"frozen on the first inputs are not rerun by this step.\n", encoding="utf-8")
     return {"manifest": str(p2), "sha256": sha_file(p2), "cases_file_sha256": files[CASES_V2_FILE],
             "withheld": int(k.sum()), "per_earthquake": per_eq, "supersedes": m1_sha}
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Predictions v3 (founder ruling 52a, 2026-11-24): every model of predictions manifest v2 rerun on inputs v2, with
+# the same model list, options and code. Only the inputs change. A file whose bytes are unchanged is carried over
+# under its v2 name; a file that changed is written under a new name (PRED_V3_TAG). PREDICTIONS-MANIFEST-v3.json
+# names inputs v2 and supersedes the v1 and v2 manifests by name and sha256; SUPERSEDED-v3.txt says so. Nothing is
+# rewritten. A value may change only on a case whose model inputs moved between inputs v1 and v2; any other change
+# refuses the run before the first write (it would be a finding). Opens inputs/ and predictions/ only.
+# --------------------------------------------------------------------------------------------------------------
+PREDICTIONS_MANIFEST_V3 = "PREDICTIONS-MANIFEST-v3.json"
+SUPERSEDED_NOTE_V3 = "SUPERSEDED-v3.txt"
+PRED_V3_TAG = "inputs-v2-2026-11-24"
+SCHEMA_PREDICTIONS_V3 = "evalkit-world-predictions/3"     # the v2 layout; manifest_version tells them apart
+# Input columns each frozen file reads, per model (run_models, run_zhu, zhu_ruling46_text). A changed value is
+# expected only on a case where one of the columns of that file's model moved. Keyed per model, not per PGA variant
+# (predictions v3 review 1, N1): the shaking score reads only its PGA column and mw, so a move in gwt_m or trace_row
+# alone never excuses a shaking score change. "{pga}" stands for the file's PGA variant.
+PRED_V3_INPUT_COLUMNS = {
+    "shaking": ("{pga}", "mw"),
+    "cpt": ("{pga}", "mw", "gwt_m", "trace_row"),
+    "zhu": ("earthquake", "lat", "lon"),
+}
+
+
+def pred_v3_input_columns(model: str, pga_variant: str) -> tuple[str, ...]:
+    """The input columns one frozen predictions file reads (see PRED_V3_INPUT_COLUMNS). Refused for a model the
+    kit does not know, so a new model never runs under a guess."""
+    kind = (MODELS.get(model) or {}).get("kind")
+    if kind == "zhu":
+        return PRED_V3_INPUT_COLUMNS["zhu"]
+    if kind not in PRED_V3_INPUT_COLUMNS or pga_variant not in PGA_VARIANTS:
+        raise D8Refused(f"no input column list for model {model!r} on {pga_variant!r}")
+    return tuple(pga_variant if c == "{pga}" else c for c in PRED_V3_INPUT_COLUMNS[kind])
+
+
+def v3_file_name(v2_name: str) -> str:
+    """The new name of a file that predictions v3 change: <v2 stem>-inputs-v2-2026-11-24.csv."""
+    stem = v2_name[:-4] if v2_name.endswith(".csv") else v2_name
+    return f"{stem}-{PRED_V3_TAG}.csv"
+
+
+def _moved_rows(old, new, columns) -> np.ndarray:
+    """True where any of `columns` differs between two input tables in the same case order (NaN equals NaN)."""
+    import pandas as pd
+    m = np.zeros(len(new), bool)
+    for c in columns:
+        if c not in new.columns or c not in old.columns:
+            m[:] = True                 # a column added or dropped moves every row
+            continue
+        a, b = old[c], new[c]
+        same = (a == b) | (pd.isna(a) & pd.isna(b))
+        m |= ~same.to_numpy(bool)
+    return m
+
+
+def _cell(line: str) -> str:
+    return line.split(",", 1)[1].split(",", 1)[0]
+
+
+def predict_v3(inputs_dir: str | Path, pred_dir: str | Path, helpers: dict | None = None,
+               zhu_grids: dict | None = None, shakemaps: dict | None = None, kit_commit: str = "") -> dict:
+    """Rerun every model of PREDICTIONS-MANIFEST-v2.json on inputs v2 (INPUTS-MANIFEST-v2.json). Writes the files
+    that change under new names, PREDICTIONS-MANIFEST-v3.json and SUPERSEDED-v3.txt; never rewrites a file. Every
+    check runs before the first write. Returns counts only (per file and per earthquake)."""
+    import pandas as pd
+    helpers = helpers or {}
+    d, di = Path(pred_dir), Path(inputs_dir)
+    for name in (PREDICTIONS_MANIFEST_V3, SUPERSEDED_NOTE_V3):
+        if (d / name).exists():
+            raise D8Refused(f"{name} exists; predictions v3 are never rewritten")
+    if zhu_grids is None or shakemaps is None:
+        raise D8Refused("predictions v3 rerun every v2 model: the Zhu grids and their ShakeMaps are needed")
+    bad = sorted(k for k, g in zhu_grids.items() if g.get("row_order") != ZHU_REFREEZE_ROW_ORDER)
+    if bad:
+        raise D8Refused(f"predictions v3 read every Zhu grid with {ZHU_REFREEZE_ROW_ORDER}, as v2; not so for {bad}")
+    missing = sorted(set(zhu_grids) - set(shakemaps))
+    if missing:
+        raise D8Refused(f"no ShakeMap for the ruling 46 split: {missing}")
+    # predictions v2, byte for byte
+    m2p = d / PREDICTIONS_MANIFEST_V2
+    if not m2p.exists():
+        raise D8Refused(f"no {PREDICTIONS_MANIFEST_V2} in {d.name}/: predictions v3 rerun the v2 model list")
+    m2, m2_sha = json.loads(m2p.read_text()), sha_file(m2p)
+    for name, row in m2["files"].items():
+        if sha_file(d / name) != row["sha256"]:
+            raise D8Refused(f"{name} differs from {PREDICTIONS_MANIFEST_V2}; stop")
+    m1 = (m2.get("supersedes") or {}).get("manifest") or {}
+    m1p = d / m1.get("name", PREDICTIONS_MANIFEST_V1)
+    if not m1p.exists() or sha_file(m1p) != m1.get("sha256"):
+        raise D8Refused(f"{PREDICTIONS_MANIFEST_V1} differs from the sha256 that {PREDICTIONS_MANIFEST_V2} names")
+    # inputs v2: not superseded, and the inputs it supersedes are the ones v2 predictions were built on
+    i2 = di / INPUTS_MANIFEST_V2
+    if not i2.exists():
+        raise D8Refused(f"no {INPUTS_MANIFEST_V2}: predictions v3 run on inputs v2")
+    ih2 = sha_file(i2)
+    if ih2 in superseded_inputs_sha256(di):
+        raise D8Refused(f"{INPUTS_MANIFEST_V2} (sha256 {ih2}) is superseded; predict on the inputs that replace it")
+    man2, cases, traces = load_inputs(di, INPUTS_MANIFEST_V2)
+    ih1 = ((man2.get("supersedes") or {}).get("manifest") or {}).get("sha256")
+    if not ih1 or m2.get("inputs_manifest_sha256") != ih1:
+        raise D8Refused("the v2 predictions were not built on the inputs that inputs v2 supersede")
+    _, cases1, _ = load_inputs(di, ((man2.get("supersedes") or {}).get("manifest") or {}).get("name",
+                                                                                            INPUTS_MANIFEST_V1))
+    ids = cases["case_id"].tolist()
+    if cases1["case_id"].tolist() != ids:
+        raise D8Refused("inputs v2 change the case ids or their order")
+    moved_any = _moved_rows(cases1, cases, sorted(set(cases.columns) | set(cases1.columns)))
+    moved_cols = sorted(c for c in cases.columns if _moved_rows(cases1, cases, [c]).any())
+    # rerun every model, in memory
+    texts, rows = {}, {}
+    for var in PGA_VARIANTS:
+        for name, (t, r) in prediction_texts(ids, run_models(cases, traces, var, **helpers), var).items():
+            texts[name], rows[name] = t, r
+    zv, zrec = run_zhu(cases, zhu_grids)
+    texts[ZHU_REFREEZE_FILE] = "case_id,value\n" + "".join(f"{c},{_fmt(x)}\n" for c, x in zip(ids, zv))
+    texts[ZHU_RULED_FILE], ruled = zhu_ruling46_text(cases, zhu_grids, shakemaps, zv)
+    if set(texts) != set(m2["files"]):
+        raise D8Refused(f"the v3 file set differs from v2: {sorted(set(texts) ^ set(m2['files']))}")
+    keep_keys = ("model", "pga_variant", "house", "output_kind", "rule", "exposure_column", "chain_id")
+    for name, r in rows.items():
+        if {k: r.get(k) for k in keep_keys} != {k: m2["files"][name].get(k) for k in keep_keys}:
+            raise D8Refused(f"{name}: the model options differ from {PREDICTIONS_MANIFEST_V2}")
+    # compare with v2, per file and per earthquake (counts only)
+    eq = cases["earthquake"].to_numpy()
+    eqs = sorted(set(eq.tolist()))
+    zero = {"values_changed": 0, "value_to_empty": 0, "empty_to_value": 0, "value_to_other_value": 0,
+            "reason_changed": 0}
+    per_file, per_eq_total, unexpected = {}, {e: dict(zero, files_changed=0) for e in eqs}, {}
+    changed_cases = np.zeros(len(ids), bool)
+    for name in sorted(texts):
+        old = (d / name).read_text(encoding="utf-8").splitlines()
+        new = texts[name].splitlines()
+        if old[0] != new[0] or len(old) != len(new) or [x.split(",", 1)[0] for x in old[1:]] != ids:
+            raise D8Refused(f"{name}: the v2 file is not in input case order")
+        diff = np.array([a != b for a, b in zip(old[1:], new[1:])], bool)
+        cols = pred_v3_input_columns(m2["files"][name]["model"], m2["files"][name]["pga_variant"])
+        bad_rows = diff & ~_moved_rows(cases1, cases, cols)
+        if bad_rows.any():
+            unexpected[name] = {e: int(bad_rows[eq == e].sum()) for e in eqs if bad_rows[eq == e].any()}
+        changed_cases |= diff
+        fe = {}
+        for e in eqs:
+            k = np.flatnonzero((eq == e) & diff)
+            if not k.size:
+                continue
+            o = [_cell(old[i + 1]) for i in k]
+            n_ = [_cell(new[i + 1]) for i in k]
+            c = {"values_changed": int(k.size),
+                 "value_to_empty": int(sum(a != "" and b == "" for a, b in zip(o, n_))),
+                 "empty_to_value": int(sum(a == "" and b != "" for a, b in zip(o, n_))),
+                 "value_to_other_value": int(sum(a != "" and b != "" and a != b for a, b in zip(o, n_))),
+                 "reason_changed": int(sum(a == b for a, b in zip(o, n_)))}
+            fe[e] = c
+            for key, v in c.items():
+                per_eq_total[e][key] += v
+            per_eq_total[e]["files_changed"] += 1
+        per_file[name] = {"values_changed": int(diff.sum()), "per_earthquake": fe}
+    if unexpected:
+        raise D8Refused(f"a value changed on a case whose model inputs did not move (a finding; nothing written): "
+                        f"{json.dumps(unexpected, sort_keys=True)}")
+    changed = sorted(n for n, r in per_file.items() if r["values_changed"])
+    files, writes, sup_files = {}, {}, {}
+    for name in sorted(texts):
+        if name not in changed:
+            files[name] = m2["files"][name]
+            continue
+        nn = v3_file_name(name)
+        if (d / nn).exists():
+            raise D8Refused(f"{nn} exists; predictions v3 are never rewritten")
+        t = texts[name]
+        nv = sum(1 for x in t.splitlines()[1:] if _cell(x) != "")
+        files[nn] = {**m2["files"][name], "sha256": sha_bytes(t.encode()), "n_values": int(nv),
+                     "inputs_manifest": INPUTS_MANIFEST_V2, "replaces": name}
+        writes[nn] = t
+        sup_files[name] = {"sha256": m2["files"][name]["sha256"], "replaced_by": nn,
+                           "why": "rerun on inputs v2: " + ", ".join(moved_cols) + " moved on "
+                                  f"{int(moved_any.sum())} case(s) ({(man2.get('supersedes') or {}).get('why', '')})"}
+    per_eq_inputs = {str(e): int(n) for e, n in pd.Series(eq[moved_any]).value_counts().sort_index().items()}
+    pm = {"schema": SCHEMA_PREDICTIONS_V3, "item": "D8 predictions v3 on inputs v2 (eval M5, ruling 52a)",
+          "manifest_version": 3, "inputs_manifest": INPUTS_MANIFEST_V2, "inputs_manifest_sha256": ih2,
+          "kit_commit": kit_commit, "n_cases": int(len(ids)), "files": files, "not_run": m2.get("not_run"),
+          "scored": False, "labels_opened": False,
+          "same_as_v2": "model list, options (rule, chain id, output kind, exposure column) and code paths of "
+                        f"{PREDICTIONS_MANIFEST_V2}; only the inputs differ",
+          "supersedes": {"manifest": {"name": PREDICTIONS_MANIFEST_V2, "sha256": m2_sha},
+                         "manifests": {m1p.name: sha_file(m1p), PREDICTIONS_MANIFEST_V2: m2_sha},
+                         "files": sup_files, "carried_over_unchanged": sorted(n for n in texts if n not in changed)},
+          "inputs_changed": {"columns": moved_cols, "cases": int(moved_any.sum()), "per_earthquake": per_eq_inputs,
+                             "from": ih1, "to": ih2},
+          "compare_with_v2": {"per_file": per_file, "per_earthquake": per_eq_total,
+                              "cases_changed": int(changed_cases.sum()),
+                              "cases_changed_outside_moved_inputs": int((changed_cases & ~moved_any).sum())},
+          "zhu_grid_read": zrec, "zhu_ruling46_split": ruled, "zhu_row_order": ZHU_REFREEZE_ROW_ORDER,
+          "exposure_kit_mark_rules": m2.get("exposure_kit_mark_rules"), "pga_variants": m2.get("pga_variants")}
+    # writes (after every check)
+    for name, body in writes.items():
+        (d / name).write_text(body, encoding="utf-8")
+    p3 = d / PREDICTIONS_MANIFEST_V3
+    p3.write_text(json.dumps(pm, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    (d / SUPERSEDED_NOTE_V3).write_text(
+        f"{m1p.name} (sha256 {sha_file(m1p)}) and {PREDICTIONS_MANIFEST_V2} (sha256 {m2_sha}) are SUPERSEDED by "
+        f"{PREDICTIONS_MANIFEST_V3} (sha256 {sha_file(p3)}), built on {INPUTS_MANIFEST_V2} (sha256 {ih2}). So are "
+        f"these v2 files, each replaced by a file of the same name plus -{PRED_V3_TAG}: {', '.join(changed)}. "
+        f"Everything is kept byte for byte as first frozen. The other {len(texts) - len(changed)} files are "
+        f"unchanged and listed in both manifests.\n", encoding="utf-8")
+    return {"manifest": str(p3), "sha256": sha_file(p3), "n_files": len(files), "changed_files": changed,
+            "per_earthquake": {e: v for e, v in per_eq_total.items() if v["values_changed"]},
+            "cases_changed": int(changed_cases.sum()), "inputs_changed": pm["inputs_changed"]}

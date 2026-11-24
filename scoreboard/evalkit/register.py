@@ -45,7 +45,16 @@ The first line's prev_sha256 is 64 zeros (GENESIS).
 
 Entry hash (D5): intake.read_entry. A rule book form manifest (B3) is hashed exactly as submitted, by the B3 recipe;
 a kit form manifest is hashed after the kit fills conversion_id and division as null when absent. `hash` prints the
-manifest text that was hashed.
+manifest text that was hashed, the predictions file read and the entry's site list hash (spec.SITE_LIST_RECIPE).
+
+Predictions file (D5 kit step, dry run 2 point 9): `--csv PATH` if given; else NAME.csv beside NAME.json; else, for a
+manifest named manifest.json (the rule book B3 names), entry.csv beside it. A refusal names every file it looked for.
+
+Entry files in hand (D5 kit step, dry run 2 point 11): `verify --entry` on files that hash differently from the
+receipt, with the register chain and the receipt's line intact, prints ENTRY MISMATCH, not REGISTER FAULT. R20 keeps
+REGISTER FAULT for faults of the register; it sets no word for an entrant's own file mismatch. ENTRY MISMATCH is a
+status of this command, not a card mark. A register fault and a mismatch together print REGISTER FAULT with both
+reasons.
 
 Command line (run from the repo root without -I: isolated mode drops the current directory from the import path):
   python -m scoreboard.evalkit.register submit  --register R.jsonl ENTRY.json [--csv ENTRY.csv]
@@ -54,8 +63,9 @@ Command line (run from the repo root without -I: isolated mode drops the current
   python -m scoreboard.evalkit.register verify  --register R.jsonl --receipt receipt.json
         [--entry ENTRY.json [--csv ENTRY.csv]]
   python -m scoreboard.evalkit.register check   --register R.jsonl
-Exit codes: 0 done or verified; 1 REGISTER FAULT, or (submit) the line is registered and its receipt printed but
-the stamp or the receipt file failed; 2 refused, nothing registered (bad input or the spec is broken).
+Exit codes: 0 done or verified; 1 REGISTER FAULT or ENTRY MISMATCH, or (submit) the line is registered and its
+receipt printed but the stamp or the receipt file failed; 2 refused, nothing registered (bad input or the spec is
+broken).
 """
 from __future__ import annotations
 
@@ -73,7 +83,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import intake as _intake
-from .spec import SpecError, canonical_json, load_task
+from .spec import SITE_LIST_RECIPE, SpecError, canonical_json, load_task, site_list_sha256
 
 REGISTER_VERSION = 1
 RECEIPT_VERSION = 1
@@ -83,6 +93,9 @@ LINE_KEYS = ("v", "seq", "intake_utc", "item_type", "item_sha256", "prev_sha256"
 RECEIPT_KEYS = ("v", "item_type", "entry_sha256", "line_sha256", "prev_sha256", "seq", "intake_utc", "entrant")
 VERIFIED = "VERIFIED"
 REGISTER_FAULT = "REGISTER FAULT"
+ENTRY_MISMATCH = "ENTRY MISMATCH"         # files in hand differ from the receipt; the register is intact (D5 point 11)
+B3_MANIFEST_NAME = "manifest.json"        # rule book B3 file names
+B3_CSV_NAME = "entry.csv"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 _ENTRANT = re.compile(r"[A-Za-z0-9._:-]{1,64}")
@@ -258,9 +271,23 @@ def append_item(register: str | Path, item_type: str, item_sha256: str, *, entra
             "intake_utc": t, "entrant": entrant}
 
 
+def _csv_candidates(manifest_path: str | Path) -> list[Path]:
+    """Where the kit looks for the predictions file when --csv is not given, in order."""
+    mp = Path(manifest_path)
+    out = [mp.with_suffix(".csv")]                                  # the kit's convention: NAME.csv beside NAME.json
+    if mp.name == B3_MANIFEST_NAME:
+        out.append(mp.with_name(B3_CSV_NAME))                       # rule book B3: manifest.json beside entry.csv
+    return out
+
+
 def csv_for(manifest_path: str | Path, csv_path: str | Path | None = None) -> Path:
-    """The predictions CSV of an entry: `csv_path` if given, else NAME.csv beside NAME.json (the kit's convention)."""
-    return Path(csv_path) if csv_path else Path(manifest_path).with_suffix(".csv")
+    """The predictions CSV of an entry: `csv_path` if given; else NAME.csv beside NAME.json (the kit's convention);
+    else, for a manifest named manifest.json, entry.csv beside it (the rule book B3 names). When none exists, the
+    first candidate is returned and `read_entry_files` refuses with every name it tried."""
+    if csv_path:
+        return Path(csv_path)
+    cands = _csv_candidates(manifest_path)
+    return next((c for c in cands if c.exists()), cands[0])
 
 
 def read_entry_files(manifest_path: str | Path, csv_path: str | Path | None = None) -> "_intake.Intake":
@@ -270,7 +297,13 @@ def read_entry_files(manifest_path: str | Path, csv_path: str | Path | None = No
     if not Path(manifest_path).exists():
         raise SpecError(f"{manifest_path}: no such entry manifest")
     if not cp.exists():
-        raise SpecError(f"{Path(manifest_path).name}: no matching predictions file {cp.name}")
+        if csv_path:
+            raise SpecError(f"--csv {csv_path}: no such predictions file (header site_id,p; one row per task site)")
+        tried = " or ".join(c.name for c in _csv_candidates(manifest_path))
+        raise SpecError(f"{Path(manifest_path).name}: no predictions file found. Without --csv the kit reads NAME.csv "
+                        f"beside NAME.json, and entry.csv beside a manifest.json (rule book B3 names); here it looked "
+                        f"for {tried} in {Path(manifest_path).resolve().parent}. Name the predictions file "
+                        f"{tried} (header site_id,p), or pass --csv PATH")
     return _intake.read_entry(manifest_path, cp)
 
 
@@ -322,7 +355,9 @@ def verify_receipt(register: str | Path, receipt: dict, *, entry_sha: str | None
     """Check a receipt against the register. VERIFIED needs all of: the register chain checks from line 1 to the
     head; the line at the receipt's seq exists; that line's sha256, prev_sha256, item hash, item type, intake time
     and entrant equal the receipt's; and, when `entry_sha` is given (the hash of the entry files in hand), it equals
-    the receipt's entry hash. Anything else is REGISTER FAULT with the reasons listed (R20)."""
+    the receipt's entry hash. When only that last check fails, the status is ENTRY MISMATCH: the register and the
+    receipt's line are intact, and the files in hand are not the files received (D5 point 11). Anything else is
+    REGISTER FAULT with the reasons listed (R20)."""
     r = check_receipt_fields(receipt)
     chk = check_register(register)
     reasons = [f"register line {x['line']}: {x['fault']}" for x in chk.faults]
@@ -342,9 +377,12 @@ def verify_receipt(register: str | Path, receipt: dict, *, entry_sha: str | None
                        ("seq", "seq")):
             if d.get(lk) != r[rk]:
                 reasons.append(f"line {seq}: {lk} differs from the receipt's {rk}")
-    if entry_sha is not None and entry_sha != r["entry_sha256"]:
-        reasons.append("the entry files in hand hash differently from the receipt's entry_sha256")
-    return {"status": VERIFIED if not reasons else REGISTER_FAULT, "seq": seq, "entry_sha256": r["entry_sha256"],
+    mismatch = entry_sha is not None and entry_sha != r["entry_sha256"]
+    if mismatch:
+        reasons.append(f"the entry files in hand hash to {entry_sha}, not the receipt's entry_sha256 "
+                       f"{r['entry_sha256']} (the files changed after intake, or these are other files)")
+    status = REGISTER_FAULT if len(reasons) > int(mismatch) else (ENTRY_MISMATCH if mismatch else VERIFIED)
+    return {"status": status, "seq": seq, "entry_sha256": r["entry_sha256"],
             "register_lines": chk.n_lines, "head_sha256": chk.head_sha256, "reasons": reasons}
 
 
@@ -397,8 +435,15 @@ def _finish_submit(a: argparse.Namespace, rec: dict) -> int:
         it = read_entry_files(a.entry, a.csv)
         if it.entry_sha256 == rec["entry_sha256"]:
             out["intake"] = {"form": it.form, "hashed_manifest": it.manifest_text,
+                             "predictions_file": str(csv_for(a.entry, a.csv)),
                              "task": "checked" if a.task else "not checked (no --task given)",
                              "receipt_signed": False, "register_public": False}
+            if a.task:
+                checks = _intake.check_against_task(it, load_task(a.task))
+                out["intake"]["task_checks"] = checks
+                out["intake"]["package"] = checks["package"]
+            else:
+                out["intake"]["package"] = f"{_intake.NOT_CHECKED}: no --task given (R15)"
         else:                                    # the files changed between the append and the re-read
             out["intake"] = {"error": "the line is registered, but the entry files changed after the append: they "
                                       f"now hash to {it.entry_sha256}, not the receipt's {rec['entry_sha256']}; "
@@ -430,23 +475,29 @@ def main(argv: list[str] | None = None) -> int:
     sb = sub.add_parser("submit", help="check an entry's schema, hash it, append it, print the receipt")
     sb.add_argument("--register", required=True)
     sb.add_argument("entry", help="the entry manifest NAME.json")
-    sb.add_argument("--csv", help="the predictions file (default NAME.csv beside NAME.json)")
+    sb.add_argument("--csv", help="the predictions file (default NAME.csv beside NAME.json; for a manifest.json, "
+                                  "entry.csv beside it, the rule book B3 names)")
     sb.add_argument("--entrant", help="entrant id for a kit form manifest (not inside the entry hash); a rule book "
                                       "form manifest carries entrant_id itself")
-    sb.add_argument("--task", help="the task file (R2): refuse an entry whose site list, exposure key, division or "
-                                   "task_sha256 does not fit it")
+    sb.add_argument("--task", help="the task file (R2): refuse an entry whose site list, exposure key, division, "
+                                   "task_sha256 or (closed) package_sha256 does not fit it. Site list hash: sha256 "
+                                   "of the SORTED site ids, each followed by a newline; row order does not matter "
+                                   "for it (it does for the entry hash). `hash ENTRY.json` prints it")
     sb.add_argument("--receipt-out")
     sb.add_argument("--stamp", action="store_true",
                     help="after the append, stamp the head with OpenTimestamps (a publication: founder go only)")
-    vf = sub.add_parser("verify", help="check a receipt against the register")
+    vf = sub.add_parser("verify", help="check a receipt against the register: VERIFIED, REGISTER FAULT, or (with "
+                                       "--entry) ENTRY MISMATCH when only the files in hand differ")
     vf.add_argument("--register", required=True)
     vf.add_argument("--receipt", required=True)
-    vf.add_argument("--entry", help="also check that these entry files hash to the receipt's entry hash")
+    vf.add_argument("--entry", help="also check that these entry files hash to the receipt's entry hash "
+                                    "(ENTRY MISMATCH if not)")
     vf.add_argument("--csv", help="the predictions file of --entry (default NAME.csv); refused without --entry")
     ck = sub.add_parser("check", help="check the whole register chain")
     ck.add_argument("--register", required=True)
-    hs = sub.add_parser("hash", help="print an entry's hash, its manifest form and the exact manifest text hashed; "
-                                     "with --task, also a task file's hash and the exact task text hashed")
+    hs = sub.add_parser("hash", help="print an entry's hash, its manifest form, the exact manifest text hashed, the "
+                                     "predictions file read and the entry's site list hash; with --task, also a task "
+                                     "file's hash and the exact task text hashed")
     hs.add_argument("entry", nargs="?")
     hs.add_argument("--csv")
     hs.add_argument("--task", help="a task file: print the task hash an entry's task_sha256 must carry (R2)")
@@ -464,7 +515,9 @@ def main(argv: list[str] | None = None) -> int:
             if a.entry is not None:
                 it = read_entry_files(a.entry, a.csv)
                 out.update({"form": it.form, "entry_sha256": it.entry_sha256, "hashed_manifest": it.manifest_text,
-                            "entrant": it.entrant})
+                            "entrant": it.entrant, "predictions_file": str(csv_for(a.entry, a.csv)),
+                            "site_list_sha256": site_list_sha256(it.entry.site_ids),
+                            "site_list_recipe": SITE_LIST_RECIPE})
             if a.task is not None:
                 out["task_sha256"], out["hashed_task"] = _intake.task_hash(a.task)
             print(json.dumps(out, indent=1, sort_keys=True))

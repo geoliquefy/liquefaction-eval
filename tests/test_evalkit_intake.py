@@ -177,7 +177,9 @@ def test_task_checks_site_list_exposure_division_and_task_hash(tmp_path):
     tp = tmp_path / "task.json"
     t = make_task(tp)
     good = write(tmp_path, "g", b3(task_sha256=t.sha256()))
-    assert set(intake.check_against_task(intake.read_entry(good, good.with_suffix(".csv")), t).values()) == {"PASS"}
+    res = intake.check_against_task(intake.read_entry(good, good.with_suffix(".csv")), t)
+    assert {k: v for k, v in res.items() if k != "package"} == dict.fromkeys(res.keys() - {"package"}, "PASS")
+    assert res["package"].startswith(intake.NOT_CHECKED)              # this task names no package hash
     r = tmp_path / "r.jsonl"
     assert reg.submit_entry(r, good, task=tp, now=clock())["seq"] == 1
     cases = {

@@ -27,7 +27,18 @@ the same name. The card builder still hashes the kit form (`spec.entry_sha256`);
 receipt hash on a card is left for the v3 card (B8).
 
 `check_against_task` checks an entry against a task file (R2): the site list hash, the exposure key for the task
-earthquake, the division and (rule book form) task_sha256. The register intake runs it when given --task.
+earthquake, the division, (rule book form) task_sha256, and (closed division) the package hash. The register intake
+runs it when given --task. Each check reads PASS, FAIL (the intake refuses) or NOT CHECKED (the intake goes on and
+the submit output says so beside the receipt).
+
+Site list hash (R2; D5 kit step, dry run 2 point 7): spec.SITE_LIST_RECIPE, the sha256 of the SORTED site ids, each
+followed by a newline. Row order does not change it. A FAIL prints the hash the entry's ids give, the hash the task
+needs and the recipe; `register hash ENTRY.json` prints the entry's site list hash.
+
+Package hash (R15 check; D5 kit step, dry run 2 point 10). A closed rule book form entry names package_sha256. When
+the task file names one too (spec.Task.package_sha256), a different hash is refused. When the task file names none,
+the check reads NOT CHECKED: the kit has nothing to check the entry's hash against, and it does not invent a rule.
+A kit form manifest has no package field, so a closed kit form entry also reads NOT CHECKED.
 
 Task hash (R2; review 1 of D5). It is NOT the hash of the task file's bytes, and NOT the canonical JSON of the file as
 written. It is `spec.Task.sha256()`: sha256 of the canonical JSON of the task AFTER the kit reads it, which
@@ -45,8 +56,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .spec import (DIVISIONS, Entry, EntryManifest, OUTPUT_KINDS, SpecError, Task, canonical_json, entry_sha256,
-                   load_predictions, load_task, predictions_text, site_list_sha256)
+from .spec import (DIVISIONS, Entry, EntryManifest, OUTPUT_KINDS, SITE_LIST_RECIPE, SpecError, Task, canonical_json,
+                   entry_sha256, load_predictions, load_task, predictions_text, site_list_sha256)
 
 RULEBOOK_FORM = "rule book B3"
 KIT_FORM = "kit"
@@ -58,6 +69,9 @@ RULEBOOK_FIELDS = ("rule_book_version", "entrant_id", "task_sha256", "model", "m
 RULEBOOK_NULLABLE = ("conversion_sha256", "package_sha256")
 KIT_REQUIRED = ("model", "output_kind", "statement", "exposure", "house")
 KIT_OPTIONAL = ("conversion_id", "division", "feature_allowlist", "declared_target")
+PASS = "PASS"
+FAIL = "FAIL"
+NOT_CHECKED = "NOT CHECKED"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _ENTRANT = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 
@@ -72,6 +86,7 @@ class Intake:
     entrant: str | None           # rule book form: the manifest's entrant_id; kit form: None
     primary: bool | None          # rule book form only
     task_sha256: str | None       # rule book form only
+    package_sha256: str | None = None   # rule book form only (null on the open division)
 
 
 def manifest_form(d: object) -> str:
@@ -155,16 +170,41 @@ def read_entry(manifest_path: str | Path, csv_path: str | Path) -> Intake:
     except ValueError as exc:
         raise SpecError(f"{manifest_path}: not canonical JSON ({exc})") from None
     sha = hashlib.sha256((mj + "\n" + predictions_text(ids, p)).encode("utf-8")).hexdigest()
-    return Intake(RULEBOOK_FORM, e, sha, mj, raw["entrant_id"], raw["primary"], raw["task_sha256"])
+    return Intake(RULEBOOK_FORM, e, sha, mj, raw["entrant_id"], raw["primary"], raw["task_sha256"],
+                  raw["package_sha256"])
+
+
+def site_list_failure(site_ids, want: str) -> str | None:
+    """None if the ids hash to `want`, else the FAIL text: both hashes, the row count and the recipe (point 7)."""
+    got = site_list_sha256(site_ids)
+    if got == want:
+        return None
+    return (f"{FAIL}: the entry's {len(site_ids)} site ids hash to {got}; the task's site list hash is {want}. "
+            f"The entry needs one row per task site and no other row. Site list hash: {SITE_LIST_RECIPE}")
+
+
+def package_check(intake: Intake, task: Task) -> str:
+    """The R15 package hash check at intake: PASS, FAIL (refused) or NOT CHECKED (said beside the receipt)."""
+    if task.division != "closed":
+        return PASS                                   # an open task has no package; B3 makes the entry's hash null
+    if intake.form != RULEBOOK_FORM:
+        return (f"{NOT_CHECKED}: a kit form manifest has no package hash field, so nothing was checked against the "
+                f"package (R15)")
+    if task.package_sha256 is None:
+        return (f"{NOT_CHECKED}: the task file names no package_sha256, so the entry's package hash "
+                f"{intake.package_sha256} was not checked against the package (R15)")
+    if intake.package_sha256 == task.package_sha256:
+        return PASS
+    return (f"{FAIL}: manifest package_sha256 is {intake.package_sha256}; the task's package hash is "
+            f"{task.package_sha256} (R15: a closed record entry with another package hash is refused)")
 
 
 def check_against_task(intake: Intake, task: Task) -> dict:
-    """Check an entry against a task file (R2, R6, R15, B3 step 1). Returns {check: "PASS" | "FAIL: why"}."""
+    """Check an entry against a task file (R2, R6, R15, B3 step 1). Returns {check: "PASS" | "FAIL: why" |
+    "NOT CHECKED: why"}. Only a FAIL refuses (`task_failures`)."""
     m = intake.entry.manifest
     out = {}
-    got = site_list_sha256(intake.entry.site_ids)
-    out["site_list"] = "PASS" if got == task.site_list_sha256 else \
-        "FAIL: the entry's site ids do not hash to the task's site list (one row per task site, no other row)"
+    out["site_list"] = site_list_failure(intake.entry.site_ids, task.site_list_sha256) or PASS
     out["exposure_key"] = "PASS" if task.event_id in m.exposure else \
         f"FAIL: exposure names no exposure for the task earthquake {task.event_id!r}"
     out["division"] = "PASS" if m.division in (None, task.division) else \
@@ -175,6 +215,7 @@ def check_against_task(intake: Intake, task: Task) -> dict:
             (f"FAIL: manifest task_sha256 is {intake.task_sha256}; the task hash is {want} (the task hash is "
              f"Task.sha256, the canonical JSON after the kit fills its defaults, not the file's bytes; print it "
              f"with `register hash --task TASK.json`)")
+    out["package"] = package_check(intake, task)
     return out
 
 
@@ -185,5 +226,6 @@ def task_hash(path: str | Path) -> tuple[str, str]:
 
 
 def task_failures(checks: dict) -> list[str]:
-    return [f"{k}: {v}" for k, v in checks.items() if v != "PASS"]
+    """The checks that refuse an entry: every FAIL. A NOT CHECKED is not a failure; the submit output prints it."""
+    return [f"{k}: {v}" for k, v in checks.items() if v != PASS and not v.startswith(NOT_CHECKED)]
 

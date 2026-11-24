@@ -6,7 +6,9 @@ Rule book: docs/evals/RULEBOOK-V1-DRAFT-2026-11-15.md (pillar root). Rules serve
   R4   an entry's canonical hash (values at 1e-9, reusing scoreboard/g5_amend.canon_cell)
   R6   each entry declares its exposure per earthquake
   R7   labels are yes, no or not labelled; join by site id only; duplicate ids stop the run
-  R15  an entry may state its division; the card refuses one that differs from the task's
+  R15  an entry may state its division; the card refuses one that differs from the task's. A closed task may name
+       its package hash (`Task.package_sha256`, D5 kit step); it is omitted from the task JSON when unset, so every
+       older task keeps its hash and the sealed v2 card is unchanged
   step 2b  `feature_allowlist` names the feature allowlist an entry was built from (review 2 N3); omitted from the
        manifest JSON when unset, so every older entry keeps its hash
   B1 (eval M4)  `declared_target`: a house entry may declare its other_probability a probability of the task target
@@ -209,6 +211,10 @@ class Task:
     from the recomputed choice. earlier_label_sets (R10): how many earlier earthquakes of this label source exist;
     when above 0 the earlier-earthquake rate and the shaking-only baseline are required, and a card without either is
     refused ("scorer fault: baseline not built").
+
+    package_sha256 (R2, R15; D5 kit step): on the closed division, the package hash the task names. The intake refuses
+    a closed rule book form entry whose package_sha256 differs from it. Optional, and left out of the task JSON (and
+    so of the task hash) when unset; a task without it gets "package: NOT CHECKED" at intake.
     """
     event_id: str
     target: str
@@ -230,6 +236,7 @@ class Task:
     label_error: dict | None = None
     tile_rule: str = "fixed"
     earlier_label_sets: int = 0
+    package_sha256: str | None = None
 
     def __post_init__(self) -> None:
         Task.from_dict(asdict(self), _check_only=True)
@@ -261,6 +268,10 @@ class Task:
                 _real(le[k], f"task.label_error.{k}", 0.5, 1.0)
         _choice(d.get("tile_rule", "fixed"), "task.tile_rule", TILE_RULES)
         _int(d.get("earlier_label_sets", 0), "task.earlier_label_sets", 0)
+        if d.get("package_sha256") is not None:
+            _sha(d["package_sha256"], "task.package_sha256")
+            if d["division"] != "closed":
+                raise SpecError("task.package_sha256: only a closed division task names a package hash (R2, R15)")
         if _check_only:
             return None
         d = dict(d, tile_m=float(d["tile_m"]), clip=float(d["clip"]))
@@ -269,7 +280,11 @@ class Task:
         return cls(**d)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        """Plain dict; `package_sha256` appears only when set, so every older task keeps its hash (D5 kit step)."""
+        d = asdict(self)
+        if d["package_sha256"] is None:
+            del d["package_sha256"]
+        return d
 
     def sha256(self) -> str:
         """Hash of the canonical task JSON; the scorer refuses a task whose hash differs from the registration (R2)."""
@@ -492,8 +507,13 @@ def labels_sha256(labels: Labels) -> str:
     return _sha256("\n".join(rows) + "\n")
 
 
+SITE_LIST_RECIPE = ("sha256 of the UTF-8 text of the SORTED site ids, each followed by a newline (one id per line, "
+                    "and the text ends with a newline). Row order in the entry CSV does not change this hash; it does "
+                    "change the entry hash (D3 hashes the rows in file order)")
+
+
 def site_list_sha256(site_ids) -> str:
-    """sha256 of the sorted site ids, one per line. The task's site list hash (R2)."""
+    """The task's site list hash (R2), as SITE_LIST_RECIPE says: sha256 of "".join(s + "\\n" for s in sorted(ids))."""
     return _sha256("".join(f"{s}\n" for s in sorted(site_ids)))
 
 
