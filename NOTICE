@@ -1,0 +1,15 @@
+Third-party data in tests/fixtures
+
+tests/fixtures/sequence_geonet_canterbury_2010_2011.txt
+  Earthquake catalogue rows (Canterbury 2010 to 2011) from GeoNet.
+  Licence: Creative Commons Attribution 4.0 International (CC BY 4.0), https://www.geonet.org.nz/disclaimer
+  Credit: We acknowledge the New Zealand GeoNet programme and its sponsors EQC, GNS Science, LINZ, NEMA and MBIE
+  for providing data used in this repository.
+
+tests/fixtures/sequence_comcat_canterbury_2010_2011.csv
+tests/fixtures/sequence_comcat_detail_census.json
+  Earthquake catalogue rows from the USGS ANSS Comprehensive Catalog (ComCat). USGS data are in the public domain.
+
+tests/fixtures/formula_checks_2026-11-19.json
+  Ten rows quoted from Boulanger, R. W. and Idriss, I. M. (2014), CPT and SPT based liquefaction triggering
+  procedures, Report UCD/CGM-14/01, University of California, Davis, Table 3.1, as checks of published values.

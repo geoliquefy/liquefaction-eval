@@ -1,0 +1,388 @@
+{
+ "_about": "Step 2c formula and logic checks (G6+G1+G5, M2). Two parts. (1) bi14_table_3_1: ten rows copied from Boulanger and Idriss (2014), Report UCD/CGM-14/01, Table 3.1 'Summary of CPT-based liquefaction case history data' (published worked values of every chain term; pdf sha256 104ff843...8222, pdf_page = page index of that pdf). These are published case-history values, not NZGD data. (2) standard_profiles: SYNTHETIC standard CPT profiles (layer tables) for logic checks; test inputs only, never card data. No em dashes.",
+ "bi14_pdf_sha256": "104ff84355774c3a9c397b3ccaf8ba8d369364d267019049b80e34e60eaa8222",
+ "bi14_tolerance_declared_before_compute": {
+  "rd": 0.01,
+  "MSF": 0.01,
+  "K_sigma": 0.01,
+  "qc1Ncs_rel": 0.01,
+  "CSR_rel": 0.02,
+  "CSR_M75_1atm_rel": 0.02,
+  "why": "rd, MSF and K_sigma are printed to 2 decimals (one unit); qc1Ncs and CSR inherit rounding of the printed inputs (stresses to 1 kPa, qcN to 0.1, amax to 0.001 g)"
+ },
+ "bi14_table_3_1": [
+  {
+   "earthquake": "1964 M=7.6 Niigata - June 16",
+   "site": "D - Kawagisho-cho",
+   "pdf_page": 28,
+   "M": 7.6,
+   "amax_g": 0.162,
+   "depth_m": 4.4,
+   "gwt_m": 1.1,
+   "sv_kpa": 82.0,
+   "svp_kpa": 49.0,
+   "qcN": 39.8,
+   "FC_repr": 3.0,
+   "CN": 1.54,
+   "qc1N": 61.2,
+   "dqc1N": 0.0,
+   "qc1Ncs": 61.2,
+   "rd": 0.97,
+   "CSR": 0.17,
+   "K_sigma": 1.06,
+   "MSF": 1.0,
+   "CSR_M75_1atm": 0.161
+  },
+  {
+   "earthquake": "1964 M=7.6 Niigata - June 16",
+   "site": "F - Show Bridge (right bank)",
+   "pdf_page": 28,
+   "M": 7.6,
+   "amax_g": 0.162,
+   "depth_m": 5.5,
+   "gwt_m": 1.7,
+   "sv_kpa": 98.0,
+   "svp_kpa": 61.0,
+   "qcN": 124.0,
+   "FC_repr": 5.0,
+   "CN": 1.23,
+   "qc1N": 152.0,
+   "dqc1N": 0.2,
+   "qc1Ncs": 152.1,
+   "rd": 0.96,
+   "CSR": 0.163,
+   "K_sigma": 1.08,
+   "MSF": 0.98,
+   "CSR_M75_1atm": 0.154
+  },
+  {
+   "earthquake": "1968 Inangahua, New Zealand - May 23",
+   "site": "Three Channel Flat",
+   "pdf_page": 28,
+   "M": 7.2,
+   "amax_g": 0.6,
+   "depth_m": 2.9,
+   "gwt_m": 3.1,
+   "sv_kpa": 50.0,
+   "svp_kpa": 50.0,
+   "qcN": 20.0,
+   "FC_repr": 18.0,
+   "CN": 1.55,
+   "qc1N": 31.0,
+   "dqc1N": 23.8,
+   "qc1Ncs": 54.7,
+   "rd": 0.98,
+   "CSR": 0.382,
+   "K_sigma": 1.05,
+   "MSF": 1.01,
+   "CSR_M75_1atm": 0.358
+  },
+  {
+   "earthquake": "1975 M=7.0 Haicheng - Feb 4",
+   "site": "Chemical Fiber Site",
+   "pdf_page": 28,
+   "M": 7.0,
+   "amax_g": 0.3,
+   "depth_m": 3.0,
+   "gwt_m": 1.5,
+   "sv_kpa": 54.0,
+   "svp_kpa": 40.0,
+   "qcN": 14.6,
+   "FC_repr": 60.0,
+   "CN": 1.67,
+   "qc1N": 24.4,
+   "dqc1N": 55.6,
+   "qc1Ncs": 80.0,
+   "rd": 0.97,
+   "CSR": 0.261,
+   "K_sigma": 1.09,
+   "MSF": 1.03,
+   "CSR_M75_1atm": 0.233
+  },
+  {
+   "earthquake": "1981 M=5.9 WestMorland - April 26",
+   "site": "Wildlife B",
+   "pdf_page": 29,
+   "M": 5.9,
+   "amax_g": 0.26,
+   "depth_m": 4.8,
+   "gwt_m": 1.2,
+   "sv_kpa": 90.0,
+   "svp_kpa": 54.0,
+   "qcN": 53.3,
+   "FC_repr": 30.0,
+   "CN": 1.33,
+   "qc1N": 70.9,
+   "dqc1N": 49.7,
+   "qc1Ncs": 120.6,
+   "rd": 0.92,
+   "CSR": 0.258,
+   "K_sigma": 1.08,
+   "MSF": 1.25,
+   "CSR_M75_1atm": 0.19
+  },
+  {
+   "earthquake": "1989 M=6.9 Loma Prieta - Oct 18",
+   "site": "Marine Lab (UC-1)",
+   "pdf_page": 31,
+   "M": 6.93,
+   "amax_g": 0.28,
+   "depth_m": 11.0,
+   "gwt_m": 2.4,
+   "sv_kpa": 204.0,
+   "svp_kpa": 120.0,
+   "qcN": 46.0,
+   "FC_repr": 30.0,
+   "CN": 0.92,
+   "qc1N": 42.1,
+   "dqc1N": 43.8,
+   "qc1Ncs": 85.9,
+   "rd": 0.84,
+   "CSR": 0.26,
+   "K_sigma": 0.98,
+   "MSF": 1.04,
+   "CSR_M75_1atm": 0.254
+  },
+  {
+   "earthquake": "1989 M=6.9 Loma Prieta - Oct 18",
+   "site": "Farris Farm (FAR-58)",
+   "pdf_page": 31,
+   "M": 6.93,
+   "amax_g": 0.36,
+   "depth_m": 7.4,
+   "gwt_m": 4.8,
+   "sv_kpa": 136.0,
+   "svp_kpa": 111.0,
+   "qcN": 110.7,
+   "FC_repr": 4.0,
+   "CN": 0.96,
+   "qc1N": 106.1,
+   "dqc1N": 0.0,
+   "qc1Ncs": 106.1,
+   "rd": 0.9,
+   "CSR": 0.261,
+   "K_sigma": 0.99,
+   "MSF": 1.06,
+   "CSR_M75_1atm": 0.248
+  },
+  {
+   "earthquake": "1994 M=6.7 Northridge - Jan 17",
+   "site": "Balboa Blvd Unit C (BAL-10)",
+   "pdf_page": 32,
+   "M": 6.69,
+   "amax_g": 0.84,
+   "depth_m": 8.9,
+   "gwt_m": 7.2,
+   "sv_kpa": 164.0,
+   "svp_kpa": 147.0,
+   "qcN": 76.0,
+   "FC_repr": 50.0,
+   "CN": 0.85,
+   "qc1N": 64.5,
+   "dqc1N": 63.1,
+   "qc1Ncs": 127.5,
+   "rd": 0.86,
+   "CSR": 0.526,
+   "K_sigma": 0.95,
+   "MSF": 1.13,
+   "CSR_M75_1atm": 0.488
+  },
+  {
+   "earthquake": "1995 M=6.9 Hyogoken-Nambu - Jan 16",
+   "site": "Fukuzumi Park",
+   "pdf_page": 32,
+   "M": 6.9,
+   "amax_g": 0.65,
+   "depth_m": 11.8,
+   "gwt_m": 3.1,
+   "sv_kpa": 210.0,
+   "svp_kpa": 125.0,
+   "qcN": 178.7,
+   "FC_repr": 13.0,
+   "CN": 0.93,
+   "qc1N": 165.9,
+   "dqc1N": 20.3,
+   "qc1Ncs": 186.2,
+   "rd": 0.82,
+   "CSR": 0.583,
+   "K_sigma": 0.95,
+   "MSF": 1.26,
+   "CSR_M75_1atm": 0.487
+  },
+  {
+   "earthquake": "1995 M=6.9 Hyogoken-Nambu - Jan 16",
+   "site": "Kobe Art Institute",
+   "pdf_page": 32,
+   "M": 6.9,
+   "amax_g": 0.5,
+   "depth_m": 3.4,
+   "gwt_m": 3.0,
+   "sv_kpa": 62.0,
+   "svp_kpa": 58.0,
+   "qcN": 128.3,
+   "FC_repr": 13.0,
+   "CN": 1.22,
+   "qc1N": 157.0,
+   "dqc1N": 21.6,
+   "qc1Ncs": 178.6,
+   "rd": 0.97,
+   "CSR": 0.335,
+   "K_sigma": 1.1,
+   "MSF": 1.23,
+   "CSR_M75_1atm": 0.248
+  }
+ ],
+ "depth_grid": {
+  "dz_m": 0.05,
+  "z_first_m": 0.05,
+  "z_last_m": 20.0
+ },
+ "standard_profiles": {
+  "clean_sand": {
+   "layers": [
+    [
+     0.0,
+     20.0,
+     6.0,
+     0.03
+    ]
+   ],
+   "note": "uniform loose-to-medium clean sand, Rf 0.5%"
+  },
+  "silty_sand": {
+   "layers": [
+    [
+     0.0,
+     20.0,
+     4.0,
+     0.06
+    ]
+   ],
+   "note": "uniform silty sand, Rf 1.5%"
+  },
+  "clay_crust": {
+   "layers": [
+    [
+     0.0,
+     3.0,
+     0.8,
+     0.04
+    ],
+    [
+     3.0,
+     20.0,
+     6.0,
+     0.03
+    ]
+   ],
+   "note": "3 m clay crust (Rf 5%) over clean sand"
+  },
+  "layered": {
+   "layers": [
+    [
+     0.0,
+     2.0,
+     3.0,
+     0.05
+    ],
+    [
+     2.0,
+     6.0,
+     5.0,
+     0.04
+    ],
+    [
+     6.0,
+     9.0,
+     1.0,
+     0.04
+    ],
+    [
+     9.0,
+     20.0,
+     12.0,
+     0.08
+    ]
+   ],
+   "note": "silty crust, sand, soft clayey silt, denser sand"
+  },
+  "dense_sand": {
+   "layers": [
+    [
+     0.0,
+     20.0,
+     20.0,
+     0.12
+    ]
+   ],
+   "note": "uniform dense sand, Rf 0.6%"
+  }
+ },
+ "layers_columns": [
+  "top_m",
+  "bottom_m",
+  "qc_MPa",
+  "fs_MPa"
+ ],
+ "grids": {
+  "pga_g": [
+   0.1,
+   0.2,
+   0.3,
+   0.4,
+   0.5,
+   0.6
+  ],
+  "gwt_m": [
+   0.5,
+   1.0,
+   2.0,
+   3.0,
+   5.0
+  ],
+  "qc_scale": [
+   0.5,
+   1.0,
+   1.5,
+   2.0,
+   3.0
+  ],
+  "base": {
+   "pga_g": 0.35,
+   "gwt_m": 1.5,
+   "mw": 6.2,
+   "qc_scale": 1.0,
+   "sigma_e": 0.3
+  },
+  "zhu_base": {
+   "pgv_cms": 30.0,
+   "vs30": 250.0,
+   "precip_mm": 650.0,
+   "dw_km": 2.0,
+   "wtd_m": 2.0,
+   "mw": 6.2
+  },
+  "pgv_cms": [
+   5.0,
+   10.0,
+   20.0,
+   40.0,
+   80.0,
+   140.0
+  ],
+  "vs30": [
+   150.0,
+   200.0,
+   300.0,
+   450.0,
+   600.0
+  ],
+  "wtd_m": [
+   0.5,
+   1.0,
+   3.0,
+   10.0,
+   30.0
+  ]
+ }
+}

@@ -1,0 +1,11 @@
+{
+ "census_mw": {
+  "usp000hk46": 7.0,
+  "usp000huvq": 6.12,
+  "usp000j33b": 5.97,
+  "usp000jch0": 5.8,
+  "usp000jch9": 5.9
+ },
+ "rule": "D6: largest Mw-family magnitude over every product, preferred or not",
+ "source": "data/usgs-ground-failure-canterbury-2026-11-04/raw/comcat-detail (ComCat detail, public domain)"
+}

@@ -1,0 +1,696 @@
+# Rules registry: the rule book cut list, a PROPOSAL built from code (eval milestone M1, item D2). No em dashes.
+#
+# Founder ruling 45, correction 3: D2 builds this generator and a cut list only. No rule moves to the annex before
+# the founder approves the list, and the M1 cold read waits until D3, D4, D6 and D7 land.
+#
+# One [[rule]] per proposed binding rule: id, title, v1 (the v1 sections it comes from), text (one paragraph), and
+# EITHER enforced_by (pytest node ids that must exist) OR human_check (who, when; only with a named performer).
+# A rule binds only the part that the code and v1 both say; wording fixes only, never a meaning change.
+# [[choice]]: where v1 reads two ways, the reading the code takes; proposed, the founder confirms.
+# [[disagree]]: where the code and v1 differ (including code that refuses where v1 is silent). Neither reading is
+# bound; each waits for a code fix or a founder ruling.
+# [[annex]]: v1 text written but not yet enforced; v1's own words keep their meaning. `enforce` names the work item
+# (D3, D4, D6, D7, or none of them) that would enforce it. `awaiting = true` marks R20 to R26: rules that wait for
+# enforcement and stay in the rule book; they are never cut.
+# scripts/rules_from_code.py checks all of this and writes docs/evals/RULEBOOK-CUT-LIST-2026-11-23.md in the pillar.
+
+[meta]
+title = "Liquefaction model eval: rule book cut list (proposal)"
+date = "2026-11-23"
+goal_line = "G1+G5+G6 (eval M1): rule book cut list, a proposal generated from the kit's rules registry and checked against the kit's tests."
+v1 = "docs/evals/RULEBOOK-V1-DRAFT-2026-11-15.md (revision 4)"
+status_file = "docs/evals/RULEBOOK-V1-STATUS-2026-11-15.md"
+review = "docs/evals/RULEBOOK-V1-REVIEW-3-2026-11-15.md"
+kit = "scoreboard/evalkit/rules_registry.toml"
+max_binding_words = 3000
+
+# ---------------------------------------------------------------------------------------------------------------
+# Proposed binding rules
+# ---------------------------------------------------------------------------------------------------------------
+
+[[rule]]
+id = "R1"
+title = "Unit of scoring, and the pooled line"
+v1 = "R1, R27"
+text = """Every word, interval and MDD is computed on one card, except a pooled line. A pooled line compares two \
+entries A and B on one metric, with one paired difference d_i and its tile-bootstrap SE s_i per earthquake; each \
+earthquake enters once. The line is NOT ALLOWED unless it is registered and at least 3 of its earthquakes pass the \
+count gate. The estimator is DerSimonian-Laird for the between-earthquake variance tau^2, weights \
+w_i = 1 / (s_i^2 + tau^2), mean m = sum w_i d_i / sum w_i, and Hartung-Knapp variance \
+V = sum w_i (d_i - m)^2 / ((k - 1) sum w_i), with the two-sided p of t = m / sqrt(V) on k - 1 degrees of freedom. \
+Holm runs across the pooled lines of one release at 0.05: the line with the j-th smallest p is tested at \
+alpha_j = 0.05 / (L - j + 1), and testing stops at the first line not rejected. POOLED CANNOT TELL: Holm does not \
+reject. HOLDS: Holm rejects, and every leave-one-out interval at level 1 - alpha_j excludes 0 with the sign of m. \
+FRAGILE: Holm rejects, and some leave-one-out interval covers 0 or has the other sign. All signal in one earthquake \
+gives no HOLDS. The line prints as "across these N earthquakes"."""
+enforced_by = [
+  "tests/test_evalkit_pool.py::test_not_allowed_under_three_earthquakes",
+  "tests/test_evalkit_pool.py::test_not_allowed_unless_registered",
+  "tests/test_evalkit_pool.py::test_items_must_share_one_comparison_and_unique_earthquakes",
+  "tests/test_evalkit_pool.py::test_hartung_knapp_matches_its_formula",
+  "tests/test_evalkit_pool.py::test_holm_runs_across_the_pooled_lines_of_a_release",
+  "tests/test_evalkit_pool.py::test_holds_when_every_earthquake_agrees",
+  "tests/test_evalkit_pool.py::test_fragile_when_one_earthquake_carries_the_result",
+  "tests/test_evalkit_pool.py::test_cannot_tell_when_pooled_interval_covers_zero",
+  "tests/test_evalkit_pool.py::test_all_signal_in_one_synthetic_earthquake_gives_no_pooled_word",
+  "tests/test_evalkit_oracles.py::test_random_effects_hand_case_with_heterogeneity",
+  "tests/test_evalkit_oracles.py::test_holm_across_pooled_lines_stops_at_the_first_non_rejection",
+  "tests/test_evalkit_metamorphic.py::test_an_earthquake_entered_twice_is_refused_by_the_pooled_line",
+]
+
+[[rule]]
+id = "R2"
+title = "Task file and its hashes"
+v1 = "R2"
+text = """A task is one card. The task file names at least the earthquake id, the label source, the target, the \
+division, the track, the site list sha256 and the label rule sha256. A task file with a missing or malformed field \
+is refused. The task hash is the sha256 of the task file's \
+canonical JSON. When a registered task hash is given, the card is refused unless the task hash equals it. The card \
+is refused unless the label file's site list has the task's site list hash; that hash ignores row order."""
+enforced_by = [
+  "tests/test_evalkit_spec.py::test_task_round_trip_and_hash",
+  "tests/test_evalkit_spec.py::test_task_refuses_bad_fields",
+  "tests/test_evalkit_spec.py::test_task_refuses_missing_field",
+  "tests/test_evalkit_spec.py::test_task_constructor_validates_too",
+  "tests/test_evalkit_spec.py::test_site_list_hash_ignores_order",
+  "tests/test_evalkit_card.py::test_task_and_site_list_hashes_are_checked",
+]
+
+[[rule]]
+id = "R3"
+title = "Each entry declares what its number is"
+v1 = "R3"
+text = """The manifest gives the output kind: (a) `target_probability`, a probability of the task target; \
+(b) `other_probability`, a probability of another event; (c) `score`, any number used only for its order. Any other \
+kind is refused. An entry is probability-eligible if it is kind (a), or kind (b) or (c) with a conversion, named by \
+the conversion's sha256 in the manifest. Probability metrics and the probability Holm family apply only to \
+probability-eligible entries. A ranking-only entry gets AUC and ranking-family words only, and its row says \
+probability metrics do not apply. The card prints each entry's conversion id."""
+enforced_by = [
+  "tests/test_evalkit_spec.py::test_probability_eligible_is_r3",
+  "tests/test_evalkit_card.py::test_only_target_probabilities_get_probability_metrics",
+  "tests/test_evalkit_card.py::test_kind_cannot_be_faked",
+  "tests/test_evalkit_gates.py::test_gates_have_teeth",
+]
+
+[[rule]]
+id = "R4"
+title = "Entry file and entry hash"
+v1 = "R4, D3"
+text = """A record entry is an entry file plus a manifest. The entry file has the header `site_id,p`, and every task \
+site needs a value. Site ids are non-empty, hold no comma, quote or space, and are unique; a duplicate id stops the run. Every \
+value is a finite number, and a probability kind lies in [0, 1]. A manifest with a missing, extra or malformed field \
+is refused. The entry hash is the sha256 of the canonical manifest JSON, a newline, then the canonical predictions \
+text (D3), and it is the entry's identity. Every entry on a card has its own model name."""
+enforced_by = [
+  "tests/test_evalkit_spec.py::test_entry_validation",
+  "tests/test_evalkit_spec.py::test_manifest_refuses_bad_fields",
+  "tests/test_evalkit_spec.py::test_manifest_json_is_strict",
+  "tests/test_evalkit_spec.py::test_entry_hash_matches_g5_canonical_text_and_binds_manifest",
+  "tests/test_evalkit_canonical.py::test_older_manifests_keep_their_hash",
+  "tests/test_evalkit_card.py::test_exposure_and_division_are_required",
+]
+
+[[rule]]
+id = "R5"
+title = "Tracks, and when a card names a best entry"
+v1 = "R5, R16, R23"
+text = """A record-track card prints RETROSPECTIVE and names no best entry. A forward-track card prints FORWARD. A card \
+names at most one best entry per Holm family, and only if all of these hold: the card is on the forward track; the \
+candidate is the top row of the family (highest AUC, or lowest log loss at the main clip); it is an entry, not a \
+baseline; it SEPARATES BETTER from every other row of that family, baselines included; its exposure class is UNSEEN; \
+and it is not a HOUSE entry, since no tester has rerun the card. Otherwise no entry is named and the card lists each \
+reason. Which near copy a candidate need not separate from is not bound here: the code and v1 disagree (R5 point 6, \
+R19 blocking)."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_forward_card_names_a_best_entry_only_when_separated",
+  "tests/test_evalkit_card.py::test_record_card_never_names_one",
+  "tests/test_evalkit_card.py::test_a_baseline_is_never_named_best",
+  "tests/test_evalkit_card.py::test_house_and_exposed_entries_are_not_named",
+  "tests/test_evalkit_oracles.py::test_best_reasons_follow_an_independent_reading",
+  "tests/test_evalkit_oracles.py::test_a_family_of_two_can_name_a_best_entry",
+]
+
+[[rule]]
+id = "R6"
+title = "Exposure declaration"
+v1 = "R6"
+text = """Each entry declares one exposure class for each task earthquake: UNSEEN; SEEN INPUTS (met this earthquake's \
+inputs, not its outcomes); FITTED ON THIS EARTHQUAKE; or UNKNOWN. A card is refused if any entry declares no class \
+for the task earthquake. Every row prints its class. Only an UNSEEN entry can be named best."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_exposure_and_division_are_required",
+  "tests/test_evalkit_card.py::test_house_marked_first_and_exposure_printed",
+  "tests/test_evalkit_card.py::test_house_and_exposed_entries_are_not_named",
+]
+
+[[rule]]
+id = "R7"
+title = "Join by site id; polygon labels by the G6b rule"
+v1 = "R7, D2"
+text = """Labels join entries by site id only, never by row order; reordering rows of either file changes no number or \
+word. A duplicate site id stops the run, and a task site with no entry value is refused. The score list is the task \
+sites the label set grades yes or no. Polygon labels become site labels by the G6b rule (D2): repair each polygon and \
+keep its polygon parts; close each class's union by 0.5 m out and in; drop a site inside no class (unmapped) or two \
+classes (two classes); keep a site inside one class only if it lies at least 10 m from that class's boundary, else \
+drop it (edge). A non-finite edge distance stops the run."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_join_is_by_site_id_only",
+  "tests/test_evalkit_spec.py::test_labels_round_trip_and_validation",
+  "tests/test_evalkit_metamorphic.py::test_site_permutation_leaves_every_score_unchanged",
+  "tests/test_evalkit_gates.py::test_gates_have_teeth",
+  "tests/test_labels.py::test_edge_and_two_classes_and_unmapped",
+  "tests/test_labels.py::test_closing_fills_submetre_gap",
+  "tests/test_labels.py::test_nonfinite_distance_raises",
+]
+
+[[rule]]
+id = "R8"
+title = "Label hash, label error and label ceiling"
+v1 = "R8, D5"
+text = """Every card prints the label set sha256. With no error rates in the task, the card prints NOT MEASURED for the \
+label error and the label ceiling. With sensitivity Se and specificity Sp, it prints them and the label ceiling \
+C = 0.5 (1 + PPV + NPV - 1) (D5), with prevalence pi = (q - (1 - Sp)) / (Se + Sp - 1) from the observed yes share q, \
+only if pi lies strictly between 0 and 1; otherwise no ceiling prints."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_label_error_and_ceiling",
+  "tests/test_label_ceiling.py::test_ceiling_perfect_label_is_one",
+  "tests/test_label_ceiling.py::test_ceiling_matches_monte_carlo",
+]
+
+[[rule]]
+id = "R9"
+title = "Metrics on every card"
+v1 = "R9, R27"
+text = """All entries: AUC with its interval. Probability-eligible entries add: log loss at the main clip, Brier score \
+and its decomposition, mean p, the shares of exact 0 and exact 1, an isotonic (CORP) reliability curve read at 0, \
+0.05, ..., 1, calibration-in-the-large a in logit P(y = 1) = a + logit(p), and calibration slope b in \
+logit P(y = 1) = a' + b logit(p); both fits again without the sites where p is exactly 0 or 1; and log loss and \
+slope at every clip 1e-6, 1e-4, 1e-3 and 1e-2, with p set to [c, 1 - c]. \
+Honest probabilities give a slope interval holding 1 and an intercept interval holding 0; overconfident ones give a \
+slope below 1."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_every_metric_carries_an_interval",
+  "tests/test_evalkit_metrics.py::test_calibrated_entry_slope_one_intercept_zero",
+  "tests/test_evalkit_metrics.py::test_overconfident_entry_slope_below_one",
+  "tests/test_evalkit_metrics.py::test_triggering_probability_against_manifestation_labels_slope_below_one",
+  "tests/test_evalkit_metrics.py::test_isotonic_monotone_with_ties_and_matches_plain_pav",
+  "tests/test_evalkit_metrics.py::test_brier_decomposition_sums_and_is_nonnegative",
+  "tests/test_evalkit_metrics.py::test_clip_sensitivity_reported_when_exact_zeros_exist",
+  "tests/test_evalkit_oracles.py::test_log_loss_hand_value_with_exact_zero_and_one",
+  "tests/test_evalkit_oracles.py::test_brier_and_shares_hand_values",
+  "tests/test_evalkit_oracles.py::test_calibration_intercept_and_slope_match_an_independent_fit",
+  "tests/test_evalkit_oracles.py::test_reliability_grid_and_clips_are_the_registered_values",
+]
+
+[[rule]]
+id = "R10"
+title = "Baselines are entries"
+v1 = "R10"
+text = """Every card carries the coin (p = 0.5) as an entry. When the task names an earlier earthquake of the label \
+source, the card also carries the earlier-earthquake rate and the shaking-only baseline; if either is missing, the \
+card is refused with "scorer fault: baseline not built". With no earlier earthquake, both print NOT AVAILABLE. The \
+shaking-only baseline must be a probability of the task target. Names starting `baseline:` are kept for baselines. \
+No Holm family tests a pair of two baselines. A baseline is never named best (R5)."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_baselines_are_entries_on_every_card",
+  "tests/test_evalkit_card.py::test_a_required_baseline_that_is_missing_refuses_the_card",
+  "tests/test_evalkit_card.py::test_a_baseline_is_never_named_best",
+  "tests/test_evalkit_oracles.py::test_coin_baseline_scores_are_exact",
+  "tests/test_evalkit_oracles.py::test_card_pair_set_is_the_stated_one",
+]
+
+[[rule]]
+id = "R11"
+title = "Intervals, power, tiles, multiplicity"
+v1 = "R11, C2, D4, R27"
+text = """(a) A percentile tile block bootstrap (D4) gives every metric and paired difference a 95% interval (2.5 and \
+97.5 percentiles) and a 90% interval (5 and 95, same draws). MDD = (z 0.975 + z 0.80) times the bootstrap SE of the \
+paired difference. A card with fewer than 2,000 draws prints NOT FOR RELEASE. Whether a task may set the number \
+of draws is not bound here: the code and v1 disagree (R11, R27). (b) A card that fails the count gate \
+(R27; each bound inclusive) reads UNDERPOWERED and prints counts only. (c) With the variogram tile rule, the main \
+tile size comes from a semivariogram of residuals: label minus the shaking-only p; without it, minus the \
+earlier-earthquake rate; with neither, minus 0.5. No entry enters the choice. The size is the smallest candidate at \
+least the practical range r; if r exceeds them all, the largest, and the card prints "range exceeds the largest \
+tile". The card is refused if the task's tile differs, and records s, r and the variogram sha256. A tile is the \
+square (floor(x / s), floor(y / s)) and counts only if it holds a labelled site. (d) Two Holm families per card. \
+Ranking: paired AUC; no pair of two baselines or two constant rows. Probability: paired log loss between \
+probability-eligible rows; no pair of two baselines. Which rows sit outside both families (v1: NEAR COPY, beside, \
+LATE) is not bound here: the code and v1 disagree (R11 d). Holm runs within each family at 0.05, \
+and the card prints each family's size. (e) Words (C2), SEPARATES tested first. (f) Words also print at 1, 2 and 4 km and at \
+every clip, Holm rerun at each. A word that differs at a size with at least 20 tiles is TILE-SENSITIVE; a size with \
+fewer prints "too few tiles at this size". A probability-family word that differs at another clip is \
+CLIP-SENSITIVE. No sensitivity row changes the main word."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_every_metric_carries_an_interval",
+  "tests/test_evalkit_card.py::test_underpowered_card_prints_counts_only",
+  "tests/test_evalkit_card.py::test_words_are_holm_corrected_within_each_family",
+  "tests/test_evalkit_card.py::test_two_families_are_not_one",
+  "tests/test_evalkit_card.py::test_tile_size_comes_from_the_variogram_before_scoring",
+  "tests/test_evalkit_card.py::test_sensitivity_flags_match_the_words_beside",
+  "tests/test_evalkit_resample.py::test_bootstrap_is_deterministic_and_paired",
+  "tests/test_evalkit_resample.py::test_paired_mdd_formula",
+  "tests/test_evalkit_resample.py::test_tile_sensitivity_prints_1_2_4_km",
+  "tests/test_evalkit_oracles.py::test_interval_and_paired_percentiles_are_the_stated_ones",
+  "tests/test_evalkit_oracles.py::test_count_gate_boundaries_are_inclusive",
+  "tests/test_evalkit_oracles.py::test_tile_choice_residual_is_label_minus_shaking",
+  "tests/test_evalkit_oracles.py::test_choose_tile_flags_a_range_beyond_the_candidates",
+  "tests/test_evalkit_oracles.py::test_card_pair_set_is_the_stated_one",
+  "tests/test_evalkit_oracles.py::test_release_note_threshold_is_2000_draws",
+  "tests/test_evalkit_metamorphic.py::test_rigid_shift_by_whole_tiles_leaves_tiles_and_scores_unchanged",
+]
+
+[[rule]]
+id = "C2"
+title = "Words"
+v1 = "C2, R11 e"
+text = """A pair A against B in one Holm family reads: SEPARATES, with BETTER or WORSE, when Holm rejects "no \
+difference" (BETTER: A has the higher AUC or the lower log loss); EQUIVALENT when not SEPARATES and the 90% paired \
+interval lies strictly inside plus or minus the margin (AUC 0.05; log loss 0.05 nats); CANNOT TELL otherwise, with \
+the MDD printed. A whole card that fails the count gate reads UNDERPOWERED, and UNDERPOWERED is not a tie. A pooled \
+line reads HOLDS, FRAGILE, POOLED CANNOT TELL or NOT ALLOWED (R1)."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_equivalent_needs_the_90_interval_inside_the_margin",
+  "tests/test_evalkit_card.py::test_words_are_holm_corrected_within_each_family",
+  "tests/test_evalkit_card.py::test_underpowered_card_prints_counts_only",
+  "tests/test_evalkit_oracles.py::test_card_words_follow_an_independent_holm_and_c2_rule",
+  "tests/test_evalkit_oracles.py::test_registered_card_constants",
+  "tests/test_evalkit_oracles.py::test_pooled_line_words_on_hand_cases",
+]
+
+[[rule]]
+id = "R12"
+title = "Scorer gates"
+v1 = "R12"
+text = """Before any card is built, the scorer runs its gates. It must find a planted entry of known skill, and it must \
+fail on each injected defect: one tile's labels changed, every label changed, a join by row order, a monotone copy, \
+and a faked output kind. If any gate fails, no card is built. The kit reproduces two recorded results (a recorded board v2 \
+and the recorded Christchurch blind AUC), and imports the G5 stamped scorer's bytes."""
+enforced_by = [
+  "tests/test_evalkit_gates.py::test_all_gates_pass_and_are_deterministic",
+  "tests/test_evalkit_gates.py::test_gates_have_teeth",
+  "tests/test_evalkit_card.py::test_failed_gates_block_every_card",
+  "tests/test_evalkit_parity.py::test_kit_reproduces_recorded_tt_board_v2",
+  "tests/test_evalkit_parity.py::test_kit_reproduces_recorded_christchurch_blind_auc",
+  "tests/test_evalkit_parity.py::test_kit_scorer_is_the_g5_stamped_scorer",
+]
+
+[[rule]]
+id = "R15"
+title = "Divisions"
+v1 = "R15"
+text = """The division (closed or open) is part of the task, so no card ranks across divisions. An entry whose manifest \
+names another division than the task's is refused."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_exposure_and_division_are_required",
+]
+
+[[rule]]
+id = "R16"
+title = "Governance marks"
+v1 = "R16 b, R16 h"
+text = """An entry the organiser built, or whose conversion or run settings it wrote, is HOUSE. Its manifest \
+says so, and its row prints HOUSE. A HOUSE entry is never named best until a tester reruns the card. Every card prints "scored by the \
+organiser, who also enters models"."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_house_marked_first_and_exposure_printed",
+  "tests/test_evalkit_card.py::test_house_and_exposed_entries_are_not_named",
+]
+
+[[rule]]
+id = "R17"
+title = "Never shown"
+v1 = "R17"
+text = """A card holds plain JSON aggregates only. The build refuses a card holding an array, a list of more than 32 \
+items (a `comparisons` list may hold up to 512 pair records), any value that is not plain JSON, a string shaped like \
+a site id (`nzgd:`, `rer:` or `usgs:` followed by a character, any case), or any task site id."""
+enforced_by = [
+  "tests/test_evalkit_card.py::test_scan_refuses_per_site_content",
+  "tests/test_evalkit_card.py::test_site_id_shaped_names_cannot_reach_a_card",
+  "tests/test_evalkit_oracles.py::test_scan_limits_are_exact",
+  "tests/test_evalkit_card.py::test_card_is_plain_json_and_deterministic",
+]
+
+[[rule]]
+id = "R19"
+title = "Copies count as one model"
+v1 = "R19"
+text = """Two non-constant rows whose Spearman correlation over the score list exceeds 0.99 are one model: the card \
+lists the pair and counts them once in its count of models. Constant rows are never linked. A renamed copy gets \
+the identical score. Whether a copy blocks a best name is not bound here: the code and v1 disagree (R19 blocking)."""
+enforced_by = [
+  "tests/test_evalkit_gates.py::test_duplicate_detector_joins_monotone_copies_only",
+  "tests/test_evalkit_gates.py::test_spearman_handles_ties_and_constants",
+  "tests/test_evalkit_card.py::test_duplicates_are_counted_as_one_model",
+  "tests/test_evalkit_metamorphic.py::test_a_renamed_copy_gets_the_identical_score_and_is_joined_as_a_duplicate",
+]
+
+[[rule]]
+id = "D3"
+title = "Canonical hashes"
+v1 = "D3, R4"
+text = """Predictions text: each value parsed with Python `float()` and written as `format(x, ".9f")`, a value that \
+rounds to zero written `0.000000000` with no sign, cells joined by `,`, rows by `\\n`, a final `\\n`, UTF-8, rows in \
+file order. Canonical JSON: `json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=True, \
+allow_nan=False)`. A card's hash is the sha256 of its canonical JSON with floats at 12 significant digits and values \
+below 1e-12 in size hashed as 0; it ignores key order and the sign of zero, never the file bytes."""
+enforced_by = [
+  "tests/test_evalkit_spec.py::test_entry_hash_matches_g5_canonical_text_and_binds_manifest",
+  "tests/test_evalkit_canonical.py::test_cards_that_differ_below_the_precision_hash_the_same",
+  "tests/test_evalkit_canonical.py::test_cards_that_differ_above_the_precision_hash_differently",
+  "tests/test_evalkit_canonical.py::test_the_hash_ignores_key_order_and_negative_zero_but_not_types",
+  "tests/test_evalkit_canonical.py::test_near_zero_noise_hashes_as_zero",
+  "tests/test_evalkit_canonical.py::test_file_hash_reads_and_never_rewrites",
+]
+
+[[rule]]
+id = "D4"
+title = "Statistics text"
+v1 = "D4"
+text = """Each bootstrap draw takes as many tiles as the card has, with replacement, and keeps every site of each drawn \
+tile; both entries of a pair use the same draws. A draw where a statistic is undefined gives no value; intervals use \
+the finite draws. Percentiles use linear interpolation (numpy default). SE is the sample standard deviation of the \
+finite draws, divisor n - 1. Holm: sort the m p values and reject in order while p_(k) < 0.05 / (m - k + 1); stop at \
+the first that fails. The semivariogram gamma of a bin is 0.5 times the mean of (r_i - r_j)^2 over the site pairs in \
+that bin."""
+enforced_by = [
+  "tests/test_evalkit_resample.py::test_bootstrap_is_deterministic_and_paired",
+  "tests/test_evalkit_resample.py::test_interval_ignores_undefined_draws",
+  "tests/test_evalkit_resample.py::test_holm_matches_scorer_apply_holm",
+  "tests/test_evalkit_oracles.py::test_interval_and_paired_percentiles_are_the_stated_ones",
+  "tests/test_evalkit_oracles.py::test_holm_is_strict_at_the_threshold",
+  "tests/test_evalkit_oracles.py::test_semivariogram_hand_case",
+]
+
+[[rule]]
+id = "R27"
+title = "Fixed parameters the code holds"
+v1 = "R27"
+text = """These values are constants in the kit, and a change is a new major version: Holm level 0.05; EQUIVALENT \
+margins AUC 0.05 and log loss 0.05 nats; clips 1e-6, 1e-4, 1e-3, 1e-2; reliability grid 0 to 1 in steps of 0.05; \
+tile candidates 0.5, 1, 2, 4 and 8 km; sensitivity sizes 1, 2 and 4 km; semivariogram 24 bins to 12 km, at most \
+1,500 sites, range on 120 steps; near-copy Spearman 0.99; pooled line at least 3 earthquakes; 2,000 bootstrap \
+draws as the release floor (NOT FOR RELEASE below it)."""
+enforced_by = [
+  "tests/test_evalkit_oracles.py::test_registered_card_constants",
+  "tests/test_evalkit_oracles.py::test_registered_tile_rule_constants",
+  "tests/test_evalkit_oracles.py::test_reliability_grid_and_clips_are_the_registered_values",
+  "tests/test_evalkit_oracles.py::test_release_note_threshold_is_2000_draws",
+  "tests/test_evalkit_pool.py::test_not_allowed_under_three_earthquakes",
+  "tests/test_evalkit_gates.py::test_duplicate_detector_joins_monotone_copies_only",
+]
+
+# ---------------------------------------------------------------------------------------------------------------
+# Readings proposed: v1 reads two ways; the reading the code takes. The founder confirms each.
+# ---------------------------------------------------------------------------------------------------------------
+
+[[choice]]
+rule = "R11 f"
+text = """"A word that differs" at another tile size or clip means the word or the entry it favours differs. A \
+SEPARATES that flips from BETTER to WORSE is TILE-SENSITIVE or CLIP-SENSITIVE."""
+
+[[choice]]
+rule = "R11 d"
+text = """"Family size is the number of pairs that pass the count gate." Site removal (R6) is not coded, so every pair \
+uses the card's score list, and every pair passes exactly when the card passes. Family size is then every pair the \
+pair rule allows."""
+
+[[choice]]
+rule = "R19, C1"
+text = """"A family counts once in the card's count of models." The kit counts any two non-constant rows above \
+Spearman 0.99 as one model, whichever entrant made them. v1 does not say whether a cross-entrant NEAR COPY counts \
+once; the kit says yes."""
+
+[[choice]]
+rule = "R17"
+text = """"Per-site values" means any list over 32 items (pair records under `comparisons` up to 512), any array, and \
+any string shaped like a site id or equal to a task site id. A list of 32 or fewer aggregate numbers is not per-site."""
+
+[[choice]]
+rule = "R11 c"
+text = """The tile index is taken on the label file's metre coordinates (`x_m`, `y_m`). The kit cannot see which \
+projection they use, so "the WGS84 UTM zone of the epicentre" stays in the annex as a duty of whoever builds the \
+label file."""
+
+[[choice]]
+rule = "R12"
+text = """"A failed gate stops every card" is read as: no card is built at all. The "carries" half of the clause (R24) \
+has no code yet and stays in the annex."""
+
+[[choice]]
+rule = "R16"
+text = """v1 R5 point 4 says a HOUSE entry "is not barred", and point 2 needs a tester rerun first. No tester exists, so \
+the kit bars every HOUSE entry from BEST with the reason "not named until an outside tester reruns the score". Both \
+readings name no HOUSE entry today."""
+
+[[choice]]
+rule = "R1 (e)"
+text = """The pooled line's count condition is tested on the earthquakes that pass the count gate: fewer than 3 gives \
+NOT ALLOWED. Whether one failing earthquake alone makes the line NOT ALLOWED is not coded (see Code and v1 \
+disagree, R1)."""
+
+# ---------------------------------------------------------------------------------------------------------------
+# Code and v1 disagree. Neither reading is bound. Each needs a code fix or a founder ruling.
+# ---------------------------------------------------------------------------------------------------------------
+
+[[disagree]]
+rule = "R5"
+text = """Point 6 (who need not be separated from): v1 excuses only "a later entry of another entrant above the R27 \
+blocking threshold" (Spearman 0.95). The kit excuses any row it flags as a duplicate (Spearman above 0.99, any \
+entrant, either order), and only in the ranking family, so in the probability family a near copy still blocks \
+(`test_a_monotone_copy_does_not_block_the_ranking_name` tests the kit's reading). The kit also withholds BEST when a \
+separating pair is TILE-SENSITIVE or CLIP-SENSITIVE; v1 does not (marks never change a word). Not coded: point 2 \
+(tester rerun), point 3 (two outside entrants), point 5 (family representative), and of point 4 ("The entry is a \
+primary. It is not a baseline, NEAR COPY, LATE, SELF-RUN NOT RERUN, or scored as the coin (R21)") every part but \
+"not a baseline". The baseline part was a kit bug (a baseline could be named best on a forward card); it is fixed, \
+because v1 R5 point 4 and R10 say the same thing, and `test_a_baseline_is_never_named_best` enforces it."""
+
+[[disagree]]
+rule = "R19"
+text = """Blocking: v1 says a candidate need not separate from "a later entry of another entrant" whose Spearman \
+correlation with it exceeds the R27 blocking threshold, 0.95. The kit skips a flagged duplicate (above 0.99), of any \
+entrant and either order, in the ranking family only. The kit has no NEAR COPY mark and no beside table."""
+
+[[disagree]]
+rule = "R11 d"
+text = """v1 keeps NEAR COPY, beside and LATE entries outside both Holm families, and a row scored as the coin adds no \
+pair. The kit has none of these marks, so every row, a near copy included, sits in the ranking family and, if \
+probability-eligible, in the probability family. Family sizes, and so every Holm word, can differ from v1's."""
+
+[[disagree]]
+rule = "R11, R27"
+text = """The count gate is a task field (default 200, 30, 20), not a fixed R27 value. The seed is a task field, not \
+the Bitcoin block hash. The main clip is a task field (one of the R27 clips). v1 R2 says a task names no R27 \
+parameter and R9 refuses a task naming a clip. The number of bootstrap draws (`n_boot`) is a task field; v1 R27 \
+fixes it at 2,000, and the kit only prints NOT FOR RELEASE below 2,000. A task may use the `fixed` tile rule (meant \
+for synthetic tests)."""
+
+[[disagree]]
+rule = "R10"
+text = """The code refuses where v1 is silent. Whether an earlier earthquake exists is read from the task file \
+(`earlier_label_sets`). v1 says "With no earlier earthquake, both are NOT AVAILABLE and not required"; the kit reads \
+"not required" as "not allowed": a baseline supplied when the task names no earlier earthquake refuses the card."""
+
+[[disagree]]
+rule = "R3"
+text = """The code refuses where v1 is silent. v1: "kind (b) or (c) with a conversion" is probability-eligible. The \
+kit reads this as excluding kind (a) and refuses a `target_probability` manifest that names a conversion."""
+
+[[disagree]]
+rule = "R4"
+text = "A `score` entry may hold values outside [0, 1]; v1 says every value lies in [0, 1] and kind (c) rescales. Rows for sites outside the task are not refused; v1 refuses them."
+
+[[disagree]]
+rule = "R6"
+text = """The class UNKNOWN prints as "NOT CHECKED", which clashes with the CHECKED and DECLARED marks. The kit has a \
+fifth class `seen_place` (SEEN PLACE (OTHER EARTHQUAKES)) used by the effort-only baseline; v1 has four."""
+
+[[disagree]]
+rule = "R8"
+text = """The task refuses a sensitivity or specificity below 0.5; v1 needs only each above 0 and their sum above 1. \
+v1's NOT IDENTIFIED wording prints as "NOT IDENTIFIED at this yes share", and no test checks that branch."""
+
+[[disagree]]
+rule = "R9"
+text = "The kit prints a level miss metric on census label sources. v1 revision 4 removed it."
+
+[[disagree]]
+rule = "R12"
+text = """The null gate runs 20 replicates with at most 3 false SEPARATES, not v1's at least 1,000 replicates with a \
+95% Clopper-Pearson lower bound. Check (e), the published-number reproduction, is not coded."""
+
+[[disagree]]
+rule = "R16 d"
+text = """The kit lists HOUSE rows first, then outside rows, then baselines, and lists comparisons a HOUSE entry loses \
+first. v1 orders rows LOSS first, then by AUC point value."""
+
+[[disagree]]
+rule = "R1"
+text = """The kit pools the earthquakes that pass the count gate and lists the rest; v1 (e) makes the line NOT \
+ALLOWED unless every named earthquake enters. Registration is a caller flag. The kit also offers an equal-weight \
+option (scorecard v2 option K1) that v1 does not name."""
+
+# ---------------------------------------------------------------------------------------------------------------
+# Annex: written in v1 but not yet enforced by a test or a named human check. v1's own text keeps its meaning.
+# `enforce`: the work item that would enforce it. `awaiting = true`: R20 to R26, rules that wait for enforcement and
+# stay in the rule book (never cut).
+# ---------------------------------------------------------------------------------------------------------------
+
+[[annex]]
+v1 = "R20"
+awaiting = true
+enforce = "D3 (register and receipt)"
+text = "The public register, the mirror and the clock: entry time, receipts, block time, register faults. No code exists yet."
+
+[[annex]]
+v1 = "R21"
+awaiting = true
+enforce = "D4 (forward runner)"
+text = "Forward entries as frozen code: standing items, census read, run list, frozen inputs, the run, the join and the runner limits. No code exists yet."
+
+[[annex]]
+v1 = "R22"
+awaiting = true
+enforce = "D3 in part (identity and code name committed at intake); the merge rule needs the R26 check (6), so a named performer"
+text = "Entrants: checked identity, one entrant per institution or shared member, code names, the organiser as one entrant, one group under two names moved beside. No code exists yet."
+
+[[annex]]
+v1 = "R23"
+awaiting = true
+enforce = "D7 (sealed custody for an independent tester); the tester and the outside check performer are people the founder names"
+text = "The tester, the outside check performer and the organiser's pledge; no best entry without a committed tester acceptance. No code exists yet; the kit already names no HOUSE entry best (R16)."
+
+[[annex]]
+v1 = "R24"
+awaiting = true
+enforce = "D3 in part (the registration is committed to D3's register); the card list, the reasons and the carry logic have no item yet"
+text = "The release registration: which cards exist, one reason for every card not printed, carried cards and the carry limit. No code exists yet."
+
+[[annex]]
+v1 = "R25"
+awaiting = true
+enforce = "D6 (sequences)"
+text = "Sequences: the attribution window, the shock list, single-shock and sequence tasks, the \"after an earlier shock\" mark. No code exists in the kit yet."
+
+[[annex]]
+v1 = "R26"
+awaiting = true
+enforce = "D7 (the tester role) plus a performer the founder names; until then no check has a performer"
+text = """The ten named human checks (output kind; conversion and published-model authorship and "same model"; text \
+read, choices after outcomes and unseen outcome inputs; twin rule C pairs; label independence S4 and grader entries; \
+entrant identity and the merge rule; HOUSE and ORGANISER-RUN classification; prior-work conflicts; the "before label \
+release" citation; pledge breach), the card line for each check's outcome, performer and date, the effects (a check \
+not done counts for the entrant and prints "check not done"; check (7) not done counts the entry as HOUSE; check (10) \
+not done prints "pledge breach reported, not decided"), and appeals. Performer in v1: the tester; if none, the \
+outside check performer; if none, an organiser person named in the release registration who built, tuned or \
+converted no entry on the card. None is named today, so no check can be done and the rule cannot bind yet."""
+
+[[annex]]
+v1 = "Preamble"
+enforce = "none of D3, D4, D6, D7 (a founder ruling: review 3 F1 asks for an appeal with a decider)"
+text = """"What binds" and the precedence rule (readings that favour the outside entrant)."""
+
+[[annex]]
+v1 = "R1"
+enforce = "D3 for (a) and (c) (registration in the register); D4 for (d) (join time); (e) needs a kit fix, no item named"
+text = "(a) who may register a pooled line and what it names; (c) registration before the first release of any card in the set; (d) no organiser join before the block time; (e) every named earthquake enters, with the kept-site intersection; RETROSPECTIVE mark on the line."
+
+[[annex]]
+v1 = "R2"
+enforce = "D3 (commit before any join, version by rule, deadline); D4 (ShakeMap version, census read, package hash); the public task builder has no item"
+text = "Card key fields beyond the kit's task (ComCat id, origin, census magnitude, hypocentre, census read hash, window, ShakeMap version, baseline input hashes, package hash, rule-book version, deadline); the public task builder; the version-by-rule clause; the 30-day deadline; commit before any join; the mark \"task fixed after the organiser saw labels\"."
+
+[[annex]]
+v1 = "R3"
+enforce = "none of D3, D4, D6, D7 (kit intake work; \"kind disputed\" is R26 check (1))"
+text = "One conversion per entry and refusal of a second; conversion author printed; authors' own conversion moves other conversions beside; \"kind disputed\"; the \"ranking only, calibration not tested\" label on a best entry."
+
+[[annex]]
+v1 = "R4"
+enforce = "D3 (one primary per entrant per task, entry caps, no withdrawal); the value range is listed under Code and v1 disagree"
+text = "Values in [0, 1] for every kind; scoring on canonical values; extra or missing task rows refused; one primary per entrant per task; beside table for non-primaries; at most 5 entries and 5 REFUSED rows per entrant; no withdrawal."
+
+[[annex]]
+v1 = "R5"
+enforce = "D3 (entry time, REGISTER FAULT); D4 (FORWARD and LATE); D7 (point 2, tester rerun); points 3 and 5 have no item"
+text = "FORWARD by entry time 24 h before origin; LATE list; REGISTER FAULT; SEALED and \"before label release\" marks; best-entry points 2, 3, 4 (all but \"not a baseline\"), 5 and 7; the \"no independent tester\" and \"fewer than two outside entrants\" lines."
+
+[[annex]]
+v1 = "R6"
+enforce = "none of D3, D4, D6, D7 (kit exposure work; parts are R26 check (3))"
+text = "Manifest lists of training cases, choices after outcomes, text read and inputs used; the input and outcome definitions and refusal of outcome inputs; POST-EVENT SOUNDING; CHECKED and DECLARED marks and the twin check; site removal, kept sites and the pair intersection; \"FITTED, UNDERPOWERED BY OWN DECLARATION\"; beside scores on removed sites."
+
+[[annex]]
+v1 = "R7"
+enforce = "D4 (join after the R21 limit); D7 (no holder or grader entry, custody); clauses S1 to S7 have no item"
+text = "Clauses S1, S2, S3, S4 and S7 for a label source; the label rule as a task or standing item; no holder or grader entry; no HOUSE entry where an organiser person graded; join after the R21 limit on the forward track; label caveats on the card (the kit prints them, no test checks it), the not-graded share and PROTOCOL DIFFERS."
+
+[[annex]]
+v1 = "R8"
+enforce = "D7 (forward labels never reach an entrant; release to all at once); the error-rate models have no item"
+text = "Error rates by Dawid and Skene from three gradings or by Hui and Walter; 95% rate intervals; ceiling interval; NOT IDENTIFIED for rates without this earthquake; label set versions; forward labels never reach an entrant; per-site label release to all at once; holder bundle parity."
+
+[[annex]]
+v1 = "R9"
+enforce = "none of D3, D4, D6, D7 (kit release work)"
+text = "Holm rerun at every clip for the probability family's words (the kit reruns the words; the main word rule is enforced, the release rule is not)."
+
+[[annex]]
+v1 = "R10"
+enforce = "D3 (earlier earthquake committed before the task); the rest is kit work"
+text = "The definition of an earlier earthquake (region, yes map, committed before the task); the shaking-only PGA bins and merge rule; the earlier-earthquake rate pooled over label sets; the kit building baselines from committed items; baselines never HOUSE and outside model families; NEAR COPY of a baseline."
+
+[[annex]]
+v1 = "R11"
+enforce = "D3 (the block clock for the seed); the rest is kit work"
+text = "Bootstrap seed from the Bitcoin block; the bootstrap p rule as written; the UTM grid; per-pair count gate and family size from kept sites; Holm at the R27 level read from one parameter table."
+
+[[annex]]
+v1 = "R12"
+enforce = "D3 (gate outputs in the register); the null gate size and check (e) are kit work"
+text = "Null gate at 1,000 replicates with the Clopper-Pearson rule and printed rate; check (d) reproduction of the last release; check (e) published number; gate outputs in the register; cards carry after a failed gate."
+
+[[annex]]
+v1 = "R13"
+enforce = "none of D3, D4, D6, D7 (nearest: the D1 container and the D5 dry run)"
+text = "Release hash lists; rebuild classes PUBLIC REBUILD, TESTER REBUILD ONLY and OWN-ROW REBUILD; container rerun before release."
+
+[[annex]]
+v1 = "R14"
+enforce = "D3 (errata log and release records in the register)"
+text = "Scoring under the task's version; major and minor versions; release within 90 days; released cards never edited; errata log within 14 days; withdrawal only for a scorer defect; label corrections as new versions."
+
+[[annex]]
+v1 = "R15"
+enforce = "D4 (runner checks on forward packages); the closed package is kit work"
+text = "The closed package (site id list and input file hash table); entrant file checks; package hash on closed record entries; runner checks on forward packages; open-division input lists."
+
+[[annex]]
+v1 = "R16"
+enforce = "D3 for (a) (HOUSE deadlines); the rest has no item; (b) ORGANISER-RUN classification is R26 check (7)"
+text = "(a) HOUSE deadlines through the register; (b) ORGANISER-RUN rows beside until authors confirm; (c) the LOSS family; (d) row order; (e) author invitations; (f) paid links; (g) HOUSE training-site share."
+
+[[annex]]
+v1 = "R17"
+enforce = "none of D3, D4, D6, D7 (kit scan work)"
+text = "NZGD clause 6.2 beyond site ids; NLM sanction file; partner items without written OK; damage or loss numbers; the Atlas product; beside scores on fewer than 20 sites; the label-release exception."
+
+[[annex]]
+v1 = "R18"
+enforce = "none of D3, D4, D6, D7 (a kit test of the printed lines would do it)"
+text = "The five claim lines on every card (printed by the kit, one reads \"One earthquake or one city is not the world.\"; no test checks them); prior-work citations in each release."
+
+[[annex]]
+v1 = "R19"
+enforce = "D3 (intake time sets the representative); the family rules are kit work; see Code and v1 disagree"
+text = "Families only among one entrant's entries on the card; representative by intake time; no chaining; only the representative can be named; NEAR COPY of a baseline or earlier primary moved beside; authors' entry counts as earlier; the blocking threshold 0.95."
+
+[[annex]]
+v1 = "R27"
+enforce = "spread over D3, D4 and kit work"
+text = "Every R27 value not held as a kit constant: count gate as a fixed value, semivariogram fit details, bootstrap seed rule, MDD power, blocking threshold, null gate, shaking-only bins, census read and forward times, forward run limits, record times, version lead, receipt, errata, appeal, paid-link, invitation and merge windows, beside minimum, entry caps, not-graded share, release and carry limits, mirror, intake address, image transport, R12 (e) number."
+
+[[annex]]
+v1 = "Parts B, C1, D1, D2 (S1 to S7), D6, E"
+enforce = "none of D3, D4, D6, D7"
+text = "Part B (entrant guide); C1 definitions not used above; C2 row and pooled marks beyond the enforced words; D1 twin rules (scripts/g5_blind_exposure_v2.py has no test in the kit suite); D2 clauses S1 to S7; D6 census class; Part E proposals P1 to P12, open items, founder decisions, unverified claims and change log."

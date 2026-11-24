@@ -1,0 +1,13 @@
+event_id,site_id,label,x_m,y_m
+syn-eq-a,syn:a01,1,0,0
+syn-eq-a,syn:a02,0,100,0
+syn-eq-a,syn:a03,,200,0
+syn-eq-b,syn:c01,1,0,0
+syn-eq-b,syn:b02,0,105,0
+syn-eq-b,syn:b03,1,200,0
+syn-eq-c,syn:c01,1,0,0
+syn-eq-c,syn:c02,0,100,0
+syn-eq-c,syn:c03,1,200,10
+syn-eq-c,syn:c04,0,900,0
+syn-eq-d,syn:c01,0,0,0
+syn-eq-d,syn:d02,1,100,0

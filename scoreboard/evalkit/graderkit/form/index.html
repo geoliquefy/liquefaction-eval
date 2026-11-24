@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit Grading Form</title>
+<style>
+:root{--bg:#f7f7f5;--panel:#fff;--ink:#1d1d1b;--muted:#66665f;--line:#d9d9d2;--accent:#1f5fa8;--ok:#2e7d32;--warn:#a15c00;--bad:#b3261e}
+@media (prefers-color-scheme: dark){:root{--bg:#161615;--panel:#1f1f1d;--ink:#ecece6;--muted:#a3a39b;--line:#3a3a36;--accent:#7fb0ea;--ok:#7cc47f;--warn:#e0a650;--bad:#f08a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+header h1{font-size:16px;margin:0 12px 0 0}
+header .sp{flex:1}
+button{font:inherit;padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+main{display:grid;grid-template-columns:200px 1fr;min-height:calc(100vh - 52px)}
+@media (max-width:800px){main{grid-template-columns:1fr}#queue{max-height:160px}}
+#queue{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
+#queue div{padding:6px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+#queue div.cur{background:color-mix(in srgb,var(--accent) 15%,transparent)}
+#queue div.done::after{content:" saved";color:var(--ok);font-family:system-ui;font-size:12px}
+#item{padding:16px;max-width:1200px}
+.meta{color:var(--muted);margin:4px 0 12px}
+.tiles{display:flex;gap:16px;flex-wrap:wrap}
+figure{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;max-width:100%}
+figure img{display:block;width:420px;max-width:100%;height:auto;image-rendering:auto}
+figure img.lidar{image-rendering:pixelated}
+figcaption{font-size:13px;color:var(--muted);max-width:420px;margin-top:6px}
+figcaption b{color:var(--ink)}
+.missing{color:var(--warn)}
+form{margin-top:16px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+fieldset{border:0;padding:0;margin:0 0 12px}
+legend{font-weight:600;margin-bottom:4px}
+label{margin-right:14px;white-space:nowrap}
+textarea,input[type=text]{font:inherit;width:100%;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+#msg{margin-left:12px}
+#msg.err{color:var(--bad)} #msg.ok{color:var(--ok)} #msg.warn{color:var(--warn)}
+#rule{position:fixed;inset:5% 5%;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;overflow:auto;display:none;z-index:5}
+#rule pre{white-space:pre-wrap;font:14px/1.5 ui-monospace,Menlo,monospace}
+#start{max-width:520px;margin:10vh auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:24px}
+</style>
+</head>
+<body>
+<div id="start">
+  <h2>Blind audit grading</h2>
+  <p>Read the one-page rule first. Then type your grader name and start.</p>
+  <p><input type="text" id="gname" placeholder="grader name, for example grader_a" autocomplete="off"></p>
+  <p><button onclick="showRule()">Read the rule</button> <button class="primary" onclick="start()">Start</button></p>
+  <p id="startmsg" class="missing"></p>
+</div>
+<header style="display:none" id="hdr">
+  <h1>Blind audit grading</h1><span id="who"></span><span id="progress"></span>
+  <span class="sp"></span>
+  <button onclick="showRule()">Rule</button>
+  <button onclick="lockAll()">Lock all</button>
+</header>
+<main style="display:none" id="app">
+  <nav id="queue"></nav>
+  <section id="item"></section>
+</main>
+<div id="rule"><button onclick="hideRule()" style="float:right">Close</button><pre id="ruletext">Loading...</pre></div>
+<script>
+"use strict";
+let G = "", TOKEN = "", Q = [], NOTICES = [], grades = {}, cur = 0, t0 = Date.now(), locked = false;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+try { const s = localStorage.getItem("grader"); if (s) $("gname").value = s; } catch (e) {}
+
+async function getJSON(u) { const r = await fetch(u, { headers: { "X-Grader-Token": TOKEN } }); if (!r.ok) throw new Error(u + " " + r.status); return r.json(); }
+function postJSON(u, obj) { return fetch(u, { method: "POST", headers: { "Content-Type": "application/json", "X-Grader-Token": TOKEN }, body: JSON.stringify(obj) }); }
+async function showRule() {
+  $("rule").style.display = "block";
+  try { $("ruletext").textContent = await (await fetch("/packet/RULE.md")).text(); } catch (e) { $("ruletext").textContent = "Rule not found."; }
+}
+function hideRule() { $("rule").style.display = "none"; }
+
+async function start() {
+  G = $("gname").value.trim();
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(G)) { $("startmsg").textContent = "Use letters, digits, _ or - (at most 32)."; return; }
+  try { localStorage.setItem("grader", G); TOKEN = localStorage.getItem("token:" + G) || ""; } catch (e) {}
+  if (!TOKEN) { const t = prompt("If you started before in another browser, paste your token here. Otherwise press OK."); TOKEN = (t || "").trim(); }
+  const sr = await postJSON("/api/start", { grader: G });
+  const sb = await sr.json();
+  if (!sr.ok) { $("startmsg").textContent = sb.error; TOKEN = ""; return; }
+  TOKEN = sb.token;
+  try { localStorage.setItem("token:" + G, TOKEN); } catch (e) {}
+  const m = await getJSON("/packet/manifest.json");
+  Q = m.queue; NOTICES = m.notices || [];
+  const r = await getJSON("/api/grades?grader=" + encodeURIComponent(G));
+  grades = r.grades; locked = r.locked;
+  $("start").style.display = "none"; $("hdr").style.display = "flex"; $("app").style.display = "grid";
+  $("who").textContent = "Grader: " + G + (locked ? " (locked)" : "");
+  const firstOpen = Q.findIndex((q) => !grades[q]);
+  show(firstOpen < 0 ? 0 : firstOpen);
+}
+
+function drawQueue() {
+  $("queue").innerHTML = Q.map((q, i) => `<div class="${i === cur ? "cur" : ""} ${grades[q] ? "done" : ""}" onclick="show(${i})">${esc(q)}</div>`).join("");
+  $("progress").textContent = `${Object.keys(grades).length} of ${Q.length} saved`;
+}
+
+async function show(i) {
+  cur = i; t0 = Date.now();
+  const qid = Q[i];
+  const it = await getJSON(`/packet/items/${encodeURIComponent(qid)}/item.json`);
+  const g = grades[qid] || {};
+  const tiles = it.evidence.map((e) => {
+    let cap = "";
+    if (e.kind === "imagery") cap = `<b>Imagery ${esc(e.role)}</b>, ${esc(e.date)}. ${e.width_m} m wide, ${e.metres_per_pixel} m per pixel.`;
+    else cap = `<b>LiDAR change</b>: ${esc(e.post)} minus ${esc(e.pre)}. ${e.width_m} m wide, ${e.cell_m} m cells. Blue rise, red fall, clipped at +/- ${e.clip_m} m.
+      Median change in the disc ${fmt(e.median_change_disc_m)}; in the 75 to 150 m ring ${fmt(e.median_change_ring_m)}; disc minus ring ${fmt(e.disc_minus_ring_m)}.
+      <br><b>LiDAR quality for this earthquake: ${esc(e.quality || "unchecked")}</b> (${esc(e.quality_why || "no quality check recorded")}).
+      ${e.post_flown_after_window_end ? "<br><b>Post grid flown after the window end:</b> the change includes ground movement from after the window." : ""}`;
+    return `<figure><img class="${e.kind === "imagery" ? "" : "lidar"}" src="/packet/items/${encodeURIComponent(qid)}/${esc(e.file)}" alt="${esc(e.kind)} tile">
+      <figcaption>${cap}<br><span>${esc(e.attribution)} (${esc(e.licence)})</span></figcaption></figure>`;
+  }).join("");
+  const used = new Set(it.evidence.map((e) => e.source));
+  const notes = NOTICES.filter((n) => used.has(n.source)).map((n) => n.notice);
+  const miss = (it.missing || []).map((m) => `<p class="missing">${esc(m)}</p>`).join("")
+    + [...new Set(notes)].map((t) => `<details><summary>Important notice (data source)</summary><p class="meta">${esc(t)}</p></details>`).join("");
+  const radio = (name, vals, sel) => vals.map((v) => `<label><input type="radio" name="${name}" value="${esc(v)}" ${String(sel) === String(v) ? "checked" : ""}> ${esc(v)}</label>`).join("");
+  const evNames = it.evidence.map((e) => e.file);
+  $("item").innerHTML = `
+    <h2>${esc(qid)}</h2>
+    <p class="meta">${esc(it.earthquake_name)}. Grade ejecta that first appears from ${esc(it.window_start)} and before ${esc(it.window_end)}.
+      Point ${it.lat}, ${it.lon} (WGS84). Disc radius ${it.disc_radius_m} m (yellow).</p>
+    <div class="tiles">${tiles}</div>${miss}
+    <form id="f" onsubmit="return false">
+      <fieldset><legend>Ejecta inside the disc</legend>${radio("ejecta", ["YES", "NO", "CANNOT TELL"], g.ejecta)}</fieldset>
+      <fieldset><legend>Probability of ejecta</legend>${radio("probability", ["0.05", "0.25", "0.5", "0.75", "0.95"], g.probability)}</fieldset>
+      <fieldset><legend>Severity</legend>${radio("severity", ["none", "minor", "moderate", "severe", "CANNOT TELL"], g.severity)}</fieldset>
+      <fieldset><legend>CANNOT GRADE (no usable evidence)</legend>
+        <label><input type="checkbox" name="cannot_grade" ${g.cannot_grade ? "checked" : ""}> cannot grade</label>
+        ${radio("reason", ["R1", "R2", "R3", "R4", "R5", "R6"], g.reason)}
+        <input type="text" name="reason_text" placeholder="reason (required for R6)" value="${esc(g.reason_text || "")}"></fieldset>
+      <fieldset><legend>Evidence used</legend>${evNames.map((n) => `<label><input type="checkbox" name="ev" value="${esc(n)}" ${(g.evidence_used || []).includes(n) ? "checked" : ""}> ${esc(n)}</label>`).join("") || "none on disk"}
+        &nbsp; Confidence ${radio("confidence", ["1", "2", "3"], g.confidence)}</fieldset>
+      <fieldset><legend>I recognise this site or its published record</legend>${radio("recognise", ["no", "yes"], g.recognise)}</fieldset>
+      <fieldset><legend>Notes</legend><textarea name="notes" rows="2">${esc(g.notes || "")}</textarea></fieldset>
+      <button class="primary" onclick="save(true)">Save and next</button> <button onclick="save(false)">Save</button><span id="msg"></span>
+    </form>`;
+  drawQueue();
+}
+function fmt(v) { return v === null || v === undefined ? "n/a" : (v >= 0 ? "+" : "") + v.toFixed(2) + " m"; }
+
+async function save(next) {
+  const f = $("f"), val = (n) => { const e = f.querySelector(`input[name="${n}"]:checked`); return e ? e.value : null; };
+  const qid = Q[cur], prev = grades[qid] || {};
+  const g = { grader: G, queue_id: qid, ejecta: val("ejecta"), probability: val("probability"), severity: val("severity"),
+    cannot_grade: f.cannot_grade.checked, reason: val("reason"), reason_text: f.reason_text.value,
+    evidence_used: [...f.querySelectorAll('input[name="ev"]:checked')].map((e) => e.value),
+    confidence: val("confidence"), recognise: val("recognise"), notes: f.notes.value,
+    seconds: (prev.seconds || 0) + Math.round((Date.now() - t0) / 1000) };
+  const p = parseFloat(g.probability);
+  let warn = "";
+  if (!g.cannot_grade && ((g.ejecta === "YES" && p < 0.75) || (g.ejecta === "NO" && p > 0.25))) warn = " Note: the probability does not match the class.";
+  const r = await postJSON("/api/grade", g);
+  const b = await r.json();
+  if (!r.ok) { $("msg").className = "err"; $("msg").textContent = b.error; return; }
+  grades[qid] = g; t0 = Date.now();
+  $("msg").className = warn ? "warn" : "ok"; $("msg").textContent = "Saved." + warn;
+  drawQueue();
+  if (next && !warn && cur + 1 < Q.length) show(cur + 1);
+}
+
+async function lockAll() {
+  const open = Q.filter((q) => !grades[q]).length;
+  if (!confirm(`Lock all grades? ${open} items have no grade. You cannot change grades after this.`)) return;
+  const r = await postJSON("/api/lock?grader=" + encodeURIComponent(G), {});
+  if (r.ok) { locked = true; $("who").textContent = "Grader: " + G + " (locked)"; }
+}
+</script>
+</body>
+</html>

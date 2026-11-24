@@ -1,0 +1,13 @@
+0473155a698fff278d07d7bdff2e83e5315db92dab1a5aab56fdd781b67a3e32  REGISTRATION.md
+f17c1f25d4f300fb512d9aa735877313839f1db3828ab5cb9b41cbea24f0ffcf  build_v2.py
+13303b359d74c77b29a1f8c2bbc482ea589d9db1e0f937bd13a99a99a8428a89  render_v2.py
+6e7275e8191437848d88d59e27f1e90a8b5a4c5aa9c3a9397a4af48903c2566b  scorecard.json
+1a3b73a6ad9417b9f9271bd8b99a6cdc5e8101f919deee41a2ad3d95ca22fd96  SCORECARD.md
+8140d4111e0d3aaa39dd55cdbc7640870985d37f0a73f9d88c221e4b88729227  build_v2-attempt1.log
+b8ddafccb4d3df8b9bcee193c29f554afda5509e4156f1a6a1f478dad4dc1555  build_v2-attempt2.log
+# Canonical card hash (evalkit spec.card_sha256 of scorecard.json without its card_sha256 field): cc9f7b744d6bd6b3b4d5ce0956f04e3a17539ef9014de0277223033c08c8847d (stored field: cc9f7b744d6bd6b3b4d5ce0956f04e3a17539ef9014de0277223033c08c8847d; match True)
+# Canonical hash of the whole scorecard.json (spec.load_card_sha256): 1e95668c0fb655336368bc768c9f8a0003cbb8abd2895dfa88512d44a9ba8042
+# Kit: repos/liquefaction-model-evalkit, branch evalkit-2026-11-15, commit 6638d75 (K1, K2). Registration commit 0c736f2 (pillar), committed alone before build_v2.py existed.
+# Revised after independent review 1 (REVIEW-1-2026-11-19.md, pillar 2834fab): render_v2.py, SCORECARD.md, REGISTRATION Deviations 3 and 10 to 21, build logs added. build_v2.py and scorecard.json unchanged (same hashes as the 0f93274 seal).
+# REGISTRATION.md hashed here includes the Deviations section added after the build; the registered text is the 0c736f2 blob.
+# OpenTimestamps: NOT stamped. Stamping sends hashes to public calendar servers; it is a founder step (ops/stamp_ledger_hashes.sh).

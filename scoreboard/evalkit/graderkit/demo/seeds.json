@@ -1,0 +1,23 @@
+{
+ "note": "SYNTHETIC demo seed list. Only in_first_24 items enter the queue.",
+ "units": [
+  {
+   "queue_id": "Q050",
+   "x": 1708000.0,
+   "y": 5150250.0,
+   "earthquake": "feb2011",
+   "in_first_24": true,
+   "site_code": "DEMO_SEED",
+   "demo_truth": true
+  },
+  {
+   "queue_id": "Q051",
+   "x": 1708500.0,
+   "y": 5150250.0,
+   "earthquake": "sep2010",
+   "in_first_24": false,
+   "site_code": "DEMO_SEED_OUT",
+   "demo_truth": false
+  }
+ ]
+}

@@ -1,0 +1,65 @@
+{
+ "note": "SYNTHETIC demo site list for the grader kit. Points lie offshore; no real site or label.",
+ "units": [
+  {
+   "queue_id": "Q003",
+   "x": 1705000.0,
+   "y": 5150000.0,
+   "earthquake": "sep2010",
+   "cpt": "DEMO_CPT_0",
+   "score_band": 0,
+   "weight": 12.5,
+   "demo_truth": true
+  },
+  {
+   "queue_id": "Q010",
+   "x": 1705500.0,
+   "y": 5150500.0,
+   "earthquake": "feb2011",
+   "cpt": "DEMO_CPT_1",
+   "score_band": 1,
+   "weight": 12.5,
+   "demo_truth": false
+  },
+  {
+   "queue_id": "Q017",
+   "x": 1706000.0,
+   "y": 5150000.0,
+   "earthquake": "jun2011",
+   "cpt": "DEMO_CPT_2",
+   "score_band": 2,
+   "weight": 12.5,
+   "demo_truth": true
+  },
+  {
+   "queue_id": "Q024",
+   "x": 1706500.0,
+   "y": 5150500.0,
+   "earthquake": "dec2011",
+   "cpt": "DEMO_CPT_3",
+   "score_band": 0,
+   "weight": 12.5,
+   "demo_truth": false
+  },
+  {
+   "queue_id": "Q031",
+   "x": 1707000.0,
+   "y": 5150000.0,
+   "earthquake": "feb2011",
+   "cpt": "DEMO_CPT_4",
+   "score_band": 1,
+   "weight": 12.5,
+   "demo_truth": true
+  },
+  {
+   "queue_id": "Q038",
+   "x": 1707500.0,
+   "y": 5150500.0,
+   "earthquake": "sep2010",
+   "cpt": "DEMO_CPT_5",
+   "score_band": 2,
+   "weight": 12.5,
+   "demo_truth": false
+  }
+ ]
+}

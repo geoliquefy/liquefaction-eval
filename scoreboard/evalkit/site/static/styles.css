@@ -1,0 +1,81 @@
+/* GeoLiquefy scorecard site. Tokens from repos/geoliquefy-design/DESIGN.md 2.1 (light) and 2.2 (dark).
+   Body Inter, headings and wordmark DM Sans (DESIGN.md 1.1). Dense tables (DESIGN.md 6.3). No em dashes. */
+:root {
+  --surface-0: #FFFFFF; --surface-1: #F5F5F7; --surface-2: #EBEBEE;
+  --on-surface-0: #1D1D1F; --on-surface-1: #6E6E73; --on-surface-2: #4A4A4F;
+  --accent-600: #0066CC; --accent-700: #004499;
+  --border-subtle: rgba(0, 0, 0, 0.08); --border-divider: #D1D1D6;
+  --fig-house: #0066CC; --fig-org: #8A5A00; --fig-base: #4A4A4F; --fig-grid: #D1D1D6;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-head: "DM Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-0: #0B1016; --surface-1: #121A24; --surface-2: #0D141D;
+    --on-surface-0: #E7EDF3; --on-surface-1: #93A3B5; --on-surface-2: #93A3B5;
+    --accent-600: #4FB0FF; --accent-700: #8CCBFF;
+    --border-subtle: #223042; --border-divider: #223042;
+    --fig-house: #4FB0FF; --fig-org: #E0A340; --fig-base: #C9D3DD; --fig-grid: #2A3A4E;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--surface-0); color: var(--on-surface-0); font: 400 16px/1.6 var(--font-body); }
+.wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+a { color: var(--accent-600); text-underline-offset: 2px; }
+a:hover { color: var(--accent-700); }
+a:focus-visible, .table-wrap:focus-visible { outline: 2px solid var(--accent-600); outline-offset: 2px; }
+code, pre { font-family: var(--font-mono); font-size: 0.875em; }
+code { overflow-wrap: anywhere; }
+pre { background: var(--surface-1); padding: 12px; overflow-x: auto; border-radius: 6px; white-space: pre-wrap;
+      overflow-wrap: anywhere; }
+h1, h2 { font-family: var(--font-head); line-height: 1.2; }
+h1 { font-weight: 700; font-size: clamp(1.6rem, 4vw, 2.2rem); margin: 24px 0 8px; letter-spacing: -0.01em; }
+h2 { font-weight: 500; font-size: 1.3rem; margin: 40px 0 12px; }
+p, li { max-width: 72ch; }
+.lede { font-size: 1.1rem; color: var(--on-surface-0); }
+.skip { position: absolute; left: -9999px; top: 0; background: var(--surface-0); padding: 8px 12px; z-index: 10; }
+.skip:focus { left: 8px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);
+                   white-space: nowrap; }
+.site-header { border-bottom: 1px solid var(--border-divider); }
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px;
+       padding-top: 12px; padding-bottom: 12px; }
+.brand { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: var(--on-surface-0); }
+.brand img { display: block; }
+.wordmark { font-family: "DM Sans", var(--font-head); font-size: 1.25rem; letter-spacing: -0.01em; }
+.wordmark .geo { font-weight: 700; }
+.wordmark .liq { font-weight: 300; }
+.site-header nav ul { display: flex; flex-wrap: wrap; gap: 4px 16px; list-style: none; margin: 0; padding: 0; }
+.site-header nav a { display: inline-block; padding: 8px 0; font-size: 0.95rem; }
+.crumbs ol { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; padding: 0; margin: 16px 0 0;
+             font-size: 0.875rem; color: var(--on-surface-1); }
+.crumbs li + li::before { content: "/"; margin-right: 4px; }
+.table-wrap { overflow-x: auto; margin: 12px 0 8px; border: 1px solid var(--border-divider); border-radius: 6px;
+              scrollbar-width: thin; }
+table { border-collapse: collapse; width: 100%; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+caption { text-align: left; padding: 8px 12px; font-size: 0.875rem; color: var(--on-surface-0); font-weight: 600;
+          caption-side: top; }
+th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-top: 1px solid var(--border-divider); }
+thead th { background: var(--surface-1); font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+           letter-spacing: 0.05em; }
+tbody th { font-weight: 600; }
+tbody tr:nth-child(even) { background: var(--surface-1); }
+figure { margin: 16px 0; max-width: 560px; }
+figure svg { display: block; width: 100%; height: auto; }
+figcaption { font-size: 0.875rem; color: var(--on-surface-0); margin-top: 8px; }
+.forest text { font-family: var(--font-body); fill: var(--on-surface-0); }
+.forest .lab { font-size: 13px; }
+.forest .tick, .forest .note { font-size: 12px; }
+.forest .grid { stroke: var(--fig-grid); stroke-width: 1; }
+.forest .ref { stroke: var(--on-surface-0); stroke-width: 1; stroke-dasharray: 4 3; }
+.forest .ci { stroke: var(--on-surface-0); stroke-width: 2; }
+.forest .mk.house { fill: var(--fig-house); }
+.forest .mk.org { fill: var(--fig-org); }
+.forest .mk.base { fill: var(--fig-base); }
+.twin { margin-top: 40px; font-size: 0.875rem; }
+.site-footer { margin-top: 48px; border-top: 1px solid var(--border-divider); padding: 24px 0 32px;
+               font-size: 0.875rem; color: var(--on-surface-0); }
+.site-footer .hash code { font-size: 0.8rem; }
