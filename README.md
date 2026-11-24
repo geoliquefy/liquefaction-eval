@@ -1,9 +1,10 @@
 # Liquefaction eval: rule book draft, scoring kit and the sealed v2 scorecard
 
-This repository holds three things, read only. The first is the draft rule book for scoring liquefaction models
-against observed ground failure. The second is the Python kit that applies those rules (`scoreboard/evalkit`). The
-third is the sealed v2 scorecard, which the kit built on 2026-11-19. You can check the card without trusting us: the
-command in "Check the card hash" recomputes its canonical hash from the card file alone.
+This repository holds three things, read only. The first is the draft rule book, with its two amendments, for
+scoring liquefaction models against observed ground failure. The second is the Python kit that applies those rules
+(`scoreboard/evalkit`). The third is the sealed v2 scorecard, which the kit built on 2026-11-19. You can check the
+card without trusting us: the command in "Check the card hash" recomputes its canonical hash from the card file
+alone.
 
 There is no licence yet. All rights are reserved until GeoLiquefy names one. You may read the files and run the
 tests. The repository takes no issues or pull requests.
@@ -14,14 +15,16 @@ tests. The repository takes no issues or pull requests.
 |---|---|---|
 | `rulebook/RULEBOOK-V1-DRAFT-2026-11-15.md` | the rule book draft | unchanged |
 | `rulebook/RULEBOOK-V1-AMENDMENT-1-2026-11-24.md` | amendment 1: per-version values of `clip`, `tile_m` and `seed` (rule R2) | unchanged |
+| `rulebook/RULEBOOK-V1-AMENDMENT-2-2026-11-25.md` | amendment 2: the byte form of the package table (rule R15) | new on 2026-11-25 |
 | `scoreboard/` | the kit package `scoreboard.evalkit` and the 11 `scoreboard` modules it or its tests import | kit commit c052221, tag `evalkit-v0.10.0` |
 | `tests/` | the kit's `test_evalkit_*.py` files and their fixtures | kit commit c052221 |
 | `docs/scorecard-v2-2026-11-19/` | the sealed v2 card: `SCORECARD.md`, `scorecard.json`, `REGISTRATION.md`, review, build and render scripts, `SEAL.txt` | unchanged |
 
 ## The mirror differs from the kit commit in eight named places
 
-The kit repository is private. The mirror is refreshed at each tagged kit release. The first release held tag
-`evalkit-v0.6.0`. This one holds `evalkit-v0.10.0`: a subset of kit commit c052221. These are the only differences:
+The kit repository is private. The mirror is refreshed at each tagged kit release and at each new rule book
+amendment. The first release held tag `evalkit-v0.6.0`. This one holds `evalkit-v0.10.0`: a subset of kit commit
+c052221. These are the only differences:
 
 1. Two files of the sealed v2 folder are held back: `build_v2-attempt1.log` and `build_v2-attempt2.log`. They are
    build logs. They contain machine paths from the build computer. `SEAL.txt` still lists their sha256 values. The
