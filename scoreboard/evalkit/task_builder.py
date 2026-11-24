@@ -19,8 +19,9 @@ the pins. A caller value that differs is refused, nothing written. (2) On the cl
 (`evalkit.package`, kit form TABLE_RECIPE): the builder computes package_sha256 from it. A closed task without a
 table is refused, and so is a caller package_sha256 that differs from the table's hash. So a closed rule book form
 (B3) entry against a task this builder writes never reads "package: NOT CHECKED" at intake, and the task's package
-hash is the sha256 of a table someone can check. A closed kit form entry still reads NOT CHECKED: the kit form
-manifest has no package field (intake.py).
+hash is the sha256 of a table someone can check. The intake rebuilds that hash from the submitted package folder
+(`--package`). A closed kit form entry is refused: the kit form manifest has no package field (intake.py; D5
+intake, wave 11).
 
 The builder never replaces a file: it refuses an --out path that exists (a task file is a public item). It writes a
 temporary file beside --out, reads it back, and refuses (and deletes the temporary file) when the task hash or
@@ -29,8 +30,11 @@ appeared in the meantime (task builder review 1 N2).
 
 What it does not do (R2, still open). It does not derive the other fields from committed items (site universe and
 footprint, label source standing items, census read, ShakeMap rule, rule-book version): the kit holds none of them
-yet, so the caller still gives event_id, target, label source, label rule hash, site list hash, track, division and
-caveats. spec.Task itself still reads a closed task without `package_sha256`, and any clip, tile_m and seed in
+yet, so the caller still gives them. `CALLER_FIELDS` lists every such field with the committed source R2 names for
+it (D5 intake, wave 11); each one is a founder question in the pillar step record
+(docs/evals/D5-KIT-STEP-2026-11-24.md, section 7). The builder prints them as `from_caller` on every task it
+writes, so a reader sees which fields no committed item backs. A test holds that every spec.Task field is either
+pinned, taken from the package table, or listed here. spec.Task itself still reads a closed task without `package_sha256`, and any clip, tile_m and seed in
 range: every sealed card and every older task file rehashes through it, so that reader does not change.
 
 Command line (run from the repo root without -I):
@@ -52,6 +56,26 @@ from .spec import SpecError, Task, load_task, save_task
 
 PINS_FILE = Path(__file__).with_name("task_pins.json")
 DEFAULT_CARD_VERSION = "later"
+# Task fields the builder still takes from the caller, with the committed source R2 (or the rule named) gives for
+# each. The kit holds none of these sources yet (D5 intake, wave 11). No rule moves: each is a founder question.
+CALLER_FIELDS = {
+    "event_id": "the census read (R2, D6): ComCat id",
+    "target": "the label source's standing items (R2, R7): target",
+    "label_source": "the label source's standing items (R2, R7): label source version",
+    "label_rule_sha256": "the label source's standing items (R2, R7): label rule hash",
+    "label_caveats": "the label source's standing items (R7)",
+    "site_list_sha256": "the site universe inside the label source's footprint (R2); forward: the run list (R21)",
+    "track": "the card key and registration (R2, R24)",
+    "division": "the card key (R2)",
+    "n_boot": "R27 fixed parameter (bootstrap 2,000 draws); not pinned by amendment 1",
+    "min_sites": "R27 fixed parameter (count gate 200 sites); not pinned by amendment 1",
+    "min_per_class": "R27 fixed parameter (count gate 30 per class); not pinned by amendment 1",
+    "min_tiles": "R27 fixed parameter (count gate 20 tiles); not pinned by amendment 1",
+    "census": "the label source's standing items (R9: grades every site in an area)",
+    "earlier_base_rate": "the baselines and their input hashes (R2, R10)",
+    "earlier_label_sets": "the baselines and their input hashes (R2, R10)",
+    "label_error": "the label source's standing items (R8: measured sensitivity and specificity)",
+}
 CLOSED_NEEDS_PACKAGE = ("task builder: a closed division task names its package hash (package_sha256), and the "
                         "builder takes it only from the package table; give --package-table TABLE.csv (R2: \"on the "
                         "closed division, the package hash\"; R15: the package hash is the sha256 of that table)")
@@ -115,7 +139,8 @@ def write_task(fields: Mapping, path: str | Path, *, package_table: str | Path |
                card_version: str = DEFAULT_CARD_VERSION) -> dict:
     """Build the task, write it to a new file at `path` (an existing path is refused), read it back.
 
-    Returns {task_sha256, package_sha256, division, card_version, path}."""
+    Returns {task_sha256, package_sha256, division, card_version, path, from_caller}; `from_caller` lists the
+    CALLER_FIELDS the caller gave (no committed item backs them yet; R2 still open)."""
     task = build_task(fields, package_table=package_table, card_version=card_version)
     path = Path(path)
     if os.path.lexists(path):
@@ -136,7 +161,8 @@ def write_task(fields: Mapping, path: str | Path, *, package_table: str | Path |
     finally:
         tmp.unlink(missing_ok=True)
     return {"task_sha256": task.sha256(), "package_sha256": task.package_sha256, "division": task.division,
-            "card_version": card_version, "path": str(path)}
+            "card_version": card_version, "path": str(path),
+            "from_caller": sorted(k for k in CALLER_FIELDS if k in fields)}
 
 
 def main(argv: list[str] | None = None) -> int:

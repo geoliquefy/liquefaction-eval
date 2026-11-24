@@ -279,7 +279,7 @@ def test_seam3_a_line_appended_after_the_freeze_does_not_block_predict(joint):
     assert rec["late"] == [{"name": "after the freeze", "register_entry_sha256": F.recipe_sha256(after),
                             "intake_utc": "2030-01-01T06:00:00.000000Z", "seq": 4,
                             "reason": "registered after the freeze"}]                  # listed, not lost
-    m = json.loads((run / "inputs" / "A" / "manifest.json").read_text())
+    m = json.loads((run / "manifests" / "A.json").read_text())
     assert m["register"]["n_bytes"] < reg.stat().st_size
 
 

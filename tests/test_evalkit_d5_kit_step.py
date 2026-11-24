@@ -56,6 +56,16 @@ def task(division="closed", ids=IDS, **extra) -> Task:
                 division=division, tile_m=2000.0, clip=1e-6, seed=1, label_caveats="synthetic", **extra)
 
 
+def package_dir(d: Path) -> tuple[Path, str]:
+    """A synthetic package folder and the package hash the intake rebuilds from it (D5 intake, wave 11)."""
+    from scoreboard.evalkit import package as P
+    pd = d / "pkg"
+    (pd / "shakemap").mkdir(parents=True, exist_ok=True)
+    (pd / "sites.csv").write_text("site_id\n" + "".join(i + "\n" for i in IDS), encoding="utf-8")
+    (pd / "shakemap" / "grid.xml").write_text("<grid synthetic='1'/>\n", encoding="utf-8")
+    return pd, P.rebuild_sha256(pd)[0]
+
+
 def write_task(path: Path, t: Task) -> Path:
     path.write_text(json.dumps(t.to_dict()), encoding="utf-8")
     return path
@@ -92,15 +102,16 @@ def test_site_list_fail_prints_both_hashes_the_row_count_and_the_recipe(tmp_path
 
 
 def test_reverse_row_order_passes_the_site_list_but_changes_the_entry_hash(tmp_path):
-    t = task(package_sha256="1" * 64)
+    pd, pkg = package_dir(tmp_path)
+    t = task(package_sha256=pkg)
     tp = write_task(tmp_path / "task.json", t)
-    fwd = entry(tmp_path, "fwd", task_sha256=t.sha256())
-    rev = entry(tmp_path, "rev", csv_text=B3_REVERSED, task_sha256=t.sha256())
+    fwd = entry(tmp_path, "fwd", task_sha256=t.sha256(), package_sha256=pkg)
+    rev = entry(tmp_path, "rev", csv_text=B3_REVERSED, task_sha256=t.sha256(), package_sha256=pkg)
     a, b = (intake.read_entry(m, m.with_suffix(".csv")) for m in (fwd, rev))
     assert intake.check_against_task(b, t)["site_list"] == "PASS"
     assert a.entry_sha256 != b.entry_sha256                         # D3 hashes rows in file order
     r = tmp_path / "r.jsonl"
-    assert [reg.submit_entry(r, m, task=tp, now=clock())["seq"] for m in (fwd, rev)] == [1, 2]
+    assert [reg.submit_entry(r, m, task=tp, package=pd, now=clock())["seq"] for m in (fwd, rev)] == [1, 2]
 
 
 def test_hash_cli_prints_the_site_list_hash_and_help_and_readme_say_the_recipe(tmp_path, capsys):
@@ -172,18 +183,19 @@ def test_package_field_is_checked_in_the_task(tmp_path):
 
 
 def test_a_closed_entry_with_another_package_hash_is_refused(tmp_path):
-    t = task(package_sha256="3" * 64)
+    pd, pkg = package_dir(tmp_path)
+    t = task(package_sha256=pkg)
     tp = write_task(tmp_path / "task.json", t)
     mp = entry(tmp_path, task_sha256=t.sha256())                    # package_sha256 all 1s, as the B3 example
     res = intake.check_against_task(intake.read_entry(mp, mp.with_suffix(".csv")), t)
-    assert res["package"].startswith("FAIL") and "1" * 64 in res["package"] and "3" * 64 in res["package"]
+    assert res["package"].startswith("FAIL") and "1" * 64 in res["package"] and pkg in res["package"]
     r = tmp_path / "r.jsonl"
     with pytest.raises(reg.RegisterError, match="package"):
-        reg.submit_entry(r, mp, task=tp, now=clock())
+        reg.submit_entry(r, mp, task=tp, package=pd, now=clock())
     assert not r.exists() or r.read_text() == ""                   # refused: no line
-    ok = entry(tmp_path, "ok", task_sha256=t.sha256(), package_sha256="3" * 64)
+    ok = entry(tmp_path, "ok", task_sha256=t.sha256(), package_sha256=pkg)
     assert intake.check_against_task(intake.read_entry(ok, ok.with_suffix(".csv")), t)["package"] == "PASS"
-    assert reg.submit_entry(r, ok, task=tp, now=clock())["seq"] == 1
+    assert reg.submit_entry(r, ok, task=tp, package=pd, now=clock())["seq"] == 1
 
 
 def test_an_unchecked_package_hash_is_said_beside_the_receipt(tmp_path, capsys):
@@ -202,8 +214,8 @@ def test_an_unchecked_package_hash_is_said_beside_the_receipt(tmp_path, capsys):
                                "exposure": {"us7000abcd": "unseen"}, "division": "closed"}), encoding="utf-8")
     (tmp_path / "kit.csv").write_text(B3_CSV, encoding="utf-8")
     res = intake.check_against_task(intake.read_entry(kit, tmp_path / "kit.csv"), task(package_sha256="3" * 64))
-    assert res["package"].startswith("NOT CHECKED: a kit form manifest")
-    assert intake.task_failures(res) == []
+    assert res["package"] == "FAIL: " + intake.CLOSED_KIT_FORM                # D5 intake, wave 11: refused
+    assert any(f.startswith("package: FAIL") for f in intake.task_failures(res))
     open_t = task(division="open")
     om = entry(tmp_path, "open", task_sha256=open_t.sha256(), division="open", package_sha256=None)
     assert intake.check_against_task(intake.read_entry(om, om.with_suffix(".csv")), open_t)["package"] == "PASS"

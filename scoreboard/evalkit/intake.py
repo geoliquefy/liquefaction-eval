@@ -27,8 +27,8 @@ the same name. The card builder still hashes the kit form (`spec.entry_sha256`);
 receipt hash on a card is left for the v3 card (B8).
 
 `check_against_task` checks an entry against a task file (R2): the site list hash, the exposure key for the task
-earthquake, the division, (rule book form) task_sha256, and (closed division) the package hash. The register intake
-runs it when given --task. Each check reads PASS, FAIL (the intake refuses) or NOT CHECKED (the intake goes on and
+earthquake, the division, (rule book form) task_sha256, (closed division) the package hash, and (closed division)
+the package files. The register intake runs it when given --task. Each check reads PASS, FAIL (the intake refuses) or NOT CHECKED (the intake goes on and
 the submit output says so beside the receipt).
 
 Site list hash (R2; D5 kit step, dry run 2 point 7): spec.SITE_LIST_RECIPE, the sha256 of the SORTED site ids, each
@@ -38,7 +38,29 @@ needs and the recipe; `register hash ENTRY.json` prints the entry's site list ha
 Package hash (R15 check; D5 kit step, dry run 2 point 10). A closed rule book form entry names package_sha256. When
 the task file names one too (spec.Task.package_sha256), a different hash is refused. When the task file names none,
 the check reads NOT CHECKED: the kit has nothing to check the entry's hash against, and it does not invent a rule.
-A kit form manifest has no package field, so a closed kit form entry also reads NOT CHECKED.
+A kit form manifest has no package field, so it cannot name a package hash. A closed kit form entry is therefore
+refused (D5 intake, wave 11; ruling 57 c, rule book amendment 2, makes the package table required): against a
+closed task the package check reads FAIL, and the register intake refuses a kit form manifest that states
+division "closed" even without --task. The kit form does not gain a package field: that would move every kit form
+entry hash.
+
+Package files (R15, B3 step 2; D5 intake, wave 11). On a closed task that names package_sha256, the intake rebuilds
+the package hash from the submitted package folder (`package.rebuild_sha256`: every file but hidden ones, in the
+kit table form) and refuses a hash that differs. With no package folder the check reads FAIL: the intake runs the
+package check on every closed entry it checks against such a task. On a closed task that names no package hash it
+reads NOT CHECKED (nothing to rebuild against), and says that a folder given was not used. On an open task a
+package folder is refused.
+
+  closed task + package_sha256
+     |
+     +-- --package DIR only ----------------> rebuild DIR (hidden files out) == task hash?   PASS / FAIL
+     +-- --package DIR --package-table T ---> sha256(T) == task hash?  then package.check_files(T, DIR):
+                                              no FAIL or MISSING row, no non-hidden file outside T?  PASS / FAIL
+
+The table path (D5 intake review 1 F1) serves a table with a hidden input row, which rule book amendment 2 section
+4.3 point 5 allows and no rebuild can give. Both paths refuse an extra non-hidden file, though `package check` reads
+PASS for one and lists it under not_in_table (F2). With no task file, `entry_package_files_check` checks a folder
+against a closed rule book form entry's own package_sha256 (F4); without --package that reads NOT CHECKED.
 
 Task hash (R2; review 1 of D5). It is NOT the hash of the task file's bytes, and NOT the canonical JSON of the file as
 written. It is `spec.Task.sha256()`: sha256 of the canonical JSON of the task AFTER the kit reads it, which
@@ -56,6 +78,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import package as _package
 from .spec import (DIVISIONS, Entry, EntryManifest, OUTPUT_KINDS, SITE_LIST_RECIPE, SpecError, Task, canonical_json,
                    entry_sha256, load_predictions, load_task, predictions_text, site_list_sha256)
 
@@ -72,6 +95,15 @@ KIT_OPTIONAL = ("conversion_id", "division", "feature_allowlist", "declared_targ
 PASS = "PASS"
 FAIL = "FAIL"
 NOT_CHECKED = "NOT CHECKED"
+CLOSED_KIT_FORM = ("a closed division entry names its package hash (R15; B3; ruling 57 c, rule book amendment 2: "
+                   "the package table lists every input file an entry reads), and a kit form manifest has no "
+                   "package hash field. A closed kit form entry is refused. Submit a rule book form manifest (B3) "
+                   "that names rule_book_version and package_sha256")
+PACKAGE_REBUILD = ("Rebuild: the kit table of every file in the folder but hidden ones (header file_id,sha256; rows "
+                   "sorted; lowercase hex; LF), as `python -m scoreboard.evalkit.package write DIR --out TABLE.csv` "
+                   "writes it; the package hash is the sha256 of that table. Keep the table file outside DIR")
+PACKAGE_REFUSES = ("The intake refuses a FAIL or MISSING row, and also any file that `package check` lists under "
+                   "not_in_table, hidden files apart (`package check` itself reads PASS for such a file)")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _ENTRANT = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 
@@ -188,8 +220,7 @@ def package_check(intake: Intake, task: Task) -> str:
     if task.division != "closed":
         return PASS                                   # an open task has no package; B3 makes the entry's hash null
     if intake.form != RULEBOOK_FORM:
-        return (f"{NOT_CHECKED}: a kit form manifest has no package hash field, so nothing was checked against the "
-                f"package (R15)")
+        return (f"{FAIL}: {CLOSED_KIT_FORM}")
     if task.package_sha256 is None:
         return (f"{NOT_CHECKED}: the task file names no package_sha256, so the entry's package hash "
                 f"{intake.package_sha256} was not checked against the package (R15)")
@@ -199,9 +230,106 @@ def package_check(intake: Intake, task: Task) -> str:
             f"{task.package_sha256} (R15: a closed record entry with another package hash is refused)")
 
 
-def check_against_task(intake: Intake, task: Task) -> dict:
-    """Check an entry against a task file (R2, R6, R15, B3 step 1). Returns {check: "PASS" | "FAIL: why" |
-    "NOT CHECKED: why"}. Only a FAIL refuses (`task_failures`)."""
+def _not_used(package_dir, package_table) -> str:
+    given = [f"--package {package_dir}" if package_dir is not None else "",
+             f"--package-table {package_table}" if package_table is not None else ""]
+    given = [g for g in given if g]
+    return f"; the {' and '.join(given)} given {'was' if len(given) == 1 else 'were'} not used" if given else ""
+
+
+def _list(names: list[str], cap: int = 20) -> str:
+    more = f" and {len(names) - cap} more" if len(names) > cap else ""
+    return ", ".join(names[:cap]) + more
+
+
+def files_against(want: str, package_dir: str | Path | None, package_table: str | Path | None = None, *,
+                  whose: str = "the task's") -> str:
+    """Check a package folder against package hash `want` (R15, B3 step 2). PASS or FAIL (refused).
+
+    Without `package_table`: rebuild the hash from the folder (`package.rebuild_sha256`: every file but hidden ones,
+    in the kit table form) and compare. With `package_table` (D5 intake review 1 F1): the table's hash must equal
+    `want`; then every row must read PASS in `package.check_files` (no FAIL or MISSING row), and no file that check
+    lists under not_in_table may be there, hidden files apart. This is the path for a table with a hidden input row,
+    which rule book amendment 2 section 4.3 point 5 allows and which no rebuild can give."""
+    if package_dir is None:
+        return (f"{FAIL}: {whose} package hash is {want}, and the intake checks it against the package the entry "
+                f"read; no package folder was given. Give --package DIR, the folder of input files as fetched "
+                f"(R15; B3 step 2). {PACKAGE_REBUILD}")
+    if not Path(package_dir).is_dir():
+        return f"{FAIL}: the package folder {package_dir} is not a folder"
+    if package_table is not None:
+        try:
+            _rows, tsha = _package.read_table(package_table)
+        except (OSError, SpecError) as exc:
+            return f"{FAIL}: the package table {package_table} could not be read: {exc}"
+        if tsha != want:
+            return (f"{FAIL}: the package table {package_table} hashes to {tsha}; {whose} package hash is {want}. "
+                    f"Give the task's own package table (R15: the package hash is the sha256 of that table)")
+        try:
+            res = _package.check_files(package_table, package_dir)
+        except (OSError, SpecError) as exc:
+            return f"{FAIL}: the package folder {package_dir} could not be checked: {exc}"
+        bad = [f"{fid} {s}" for fid, s in sorted(res["files"].items()) if s != PASS]
+        extra = [fid for fid in res["not_in_table"] if not _package._hidden(fid)]
+        if not bad and not extra:
+            return PASS
+        parts = ([f"rows that do not read PASS: {_list(bad)}"] if bad else []) + \
+                ([f"files the table does not name: {_list(extra)}"] if extra else [])
+        return (f"{FAIL}: the package folder {package_dir} does not fit the package table {package_table} "
+                f"(package hash {want}): {'; '.join(parts)}. {PACKAGE_REFUSES}.")
+    try:
+        got, n = _package.rebuild_sha256(package_dir)
+    except (OSError, SpecError) as exc:
+        return f"{FAIL}: the package folder {package_dir} could not be rebuilt: {exc}; {whose} package hash is {want}"
+    if got == want:
+        return PASS
+    return (f"{FAIL}: the package folder {package_dir} ({n} files) rebuilds to package hash {got}; {whose} "
+            f"package hash is {want}. A file differs, is missing, or is extra (R15: the entrant checks each file "
+            f"against the table). To see which, run: python -m scoreboard.evalkit.package check TABLE.csv "
+            f"{package_dir} with the task's package table. {PACKAGE_REFUSES}. A table with a hidden input row "
+            f"(rule book amendment 2, section 4.3 point 5) never rebuilds: give --package-table TABLE.csv too, and "
+            f"the intake checks each file against that table. {PACKAGE_REBUILD}")
+
+
+def package_files_check(task: Task, package_dir: str | Path | None, package_table: str | Path | None = None) -> str:
+    """The R15 package files check at intake (B3 step 2; D5 intake, wave 11): check the submitted package folder
+    against the task's package hash (`files_against`). PASS, FAIL (refused) or NOT CHECKED."""
+    if task.division != "closed":
+        if package_dir is None and package_table is None:
+            return PASS
+        return (f"{FAIL}: a package folder or table was given, but the task is {task.division!r}; only a closed "
+                f"division task has a package (R15). Leave out --package and --package-table")
+    if task.package_sha256 is None:
+        return (f"{NOT_CHECKED}: the task file names no package_sha256, so the package files were not checked "
+                f"against it (R15){_not_used(package_dir, package_table)}")
+    return files_against(task.package_sha256, package_dir, package_table)
+
+
+def entry_package_files_check(intake: Intake, package_dir: str | Path | None,
+                              package_table: str | Path | None = None) -> str:
+    """The package files check with no task file (D5 intake review 1 F4). A closed rule book form entry names its
+    own package_sha256: with --package the intake checks the folder against that hash. That shows the folder is the
+    package the entry names; it does not show the package is the task's (only --task does). Without --package it
+    reads NOT CHECKED. An entry that names no package hash refuses a folder."""
+    own = intake.package_sha256 if intake.form == RULEBOOK_FORM else None
+    if own is None:
+        if package_dir is None and package_table is None:
+            return PASS
+        return (f"{FAIL}: a package folder or table was given, but the entry names no package_sha256 (only a "
+                f"closed rule book form entry does; R15, B3). Leave out --package and --package-table")
+    if package_dir is None and package_table is None:
+        return (f"{NOT_CHECKED}: no --task and no --package given, so the package files were not checked. A closed "
+                f"entry without --task is registered with package NOT CHECKED; give --package DIR to check the "
+                f"folder against the entry's own package_sha256 (R15; B3 step 2)")
+    return files_against(own, package_dir, package_table, whose="the entry's own")
+
+
+def check_against_task(intake: Intake, task: Task, package_dir: str | Path | None = None,
+                       package_table: str | Path | None = None) -> dict:
+    """Check an entry against a task file (R2, R6, R15, B3 steps 1 and 2). Returns {check: "PASS" | "FAIL: why" |
+    "NOT CHECKED: why"}. Only a FAIL refuses (`task_failures`). `package_dir`: the submitted package folder, needed
+    on a closed task that names a package hash; `package_table`: the task's package table, optional
+    (`package_files_check`)."""
     m = intake.entry.manifest
     out = {}
     out["site_list"] = site_list_failure(intake.entry.site_ids, task.site_list_sha256) or PASS
@@ -216,6 +344,7 @@ def check_against_task(intake: Intake, task: Task) -> dict:
              f"Task.sha256, the canonical JSON after the kit fills its defaults, not the file's bytes; print it "
              f"with `register hash --task TASK.json`)")
     out["package"] = package_check(intake, task)
+    out["package_files"] = package_files_check(task, package_dir, package_table)
     return out
 
 

@@ -146,7 +146,7 @@ def test_freeze_writes_a_hashed_manifest_and_logs_it(setup):
     out = F.freeze_inputs(setup["run"], FLAG, setup["gA"], setup["cpt"], input_type="A", register_path=setup["reg"])
     m = out["manifest"]
     assert m["input_type"] == "A" and m["shakemap"]["shakemap_version"] == "1"
-    assert m["cpt_list"]["n_sites"] == 395 and m["cpt_list"]["n_outside_grid"] == 5
+    assert m["sites"]["n_sites"] == 395 and m["sites"]["n_outside_grid"] == 5
     log = F.read_log(setup["run"])
     assert log[0]["step"] == "inputs_frozen" and log[0]["sha256"] == out["manifest_sha256"]
     assert F.load_frozen(setup["run"], "A")[1] == out["manifest_sha256"]
@@ -162,7 +162,7 @@ def test_a_frozen_type_is_never_replaced_and_edits_are_caught(setup):
     F.freeze_inputs(setup["run"], FLAG, setup["gA"], setup["cpt"], input_type="A", register_path=setup["reg"])
     with pytest.raises(F.RunRefused, match="already frozen"):
         F.freeze_inputs(setup["run"], FLAG, setup["gB"], setup["cpt"], input_type="A", register_path=setup["reg"])
-    p = setup["run"] / "inputs" / "A" / "cpt_list.csv"
+    p = setup["run"] / "inputs" / "A" / "package" / "cpt_list.csv"
     p.write_text(p.read_text().replace("s0100", "s9999"))
     with pytest.raises(F.RunRefused, match="changed after the freeze"):
         F.load_frozen(setup["run"], "A")
@@ -454,7 +454,7 @@ def test_card_b_uses_type_b_predictions(setup):
 
 def test_edited_manifest_is_caught(setup):
     F.freeze_inputs(setup["run"], FLAG, setup["gA"], setup["cpt"], input_type="A", register_path=setup["reg"])
-    p = setup["run"] / "inputs" / "A" / "manifest.json"
+    p = setup["run"] / "manifests" / "A.json"
     m = json.loads(p.read_text())
     m["event"]["mag"] = 7.9
     p.write_text(json.dumps(m))
@@ -549,15 +549,16 @@ def test_score_writes_package_sha256_on_a_closed_task_from_the_frozen_inputs(set
     assert not [d for d in F.read_log(run) if d["step"] == "labels_opened"]      # refused before the label open
     cards = {t: F.score(run, setup["labels"], t, TASK) for t in ("A", "B")}
     for t, card in cards.items():
-        m = json.loads((run / "inputs" / t / "manifest.json").read_text())
+        m = json.loads((run / "manifests" / f"{t}.json").read_text())
         table = run / "scores" / t / "package_table.csv"
         rows, pkg = P.read_table(table)
-        assert rows == {m["shakemap"]["file"]: m["shakemap"]["sha256"], "cpt_list.csv": m["cpt_list"]["sha256"]}
+        assert rows == m["inputs"]["files"] and pkg == m["inputs"]["package_sha256"]     # B4 layout (ruling 58c)
+        assert list(rows) == ["event.json", "package/cpt_list.csv", "shakemap/grid.xml", "sites.csv"]
         assert card["task"]["division"] == "closed" and card["task"]["package_sha256"] == pkg
         assert card["forward"]["package_sha256"] == pkg and card["forward"]["package_table"] == "package_table.csv"
         assert card["task_sha256"] == Task.from_dict(card["task"]).sha256()
         assert P.check_files(table, run / "inputs" / t)["status"] == "PASS"      # the frozen inputs check out
-        assert P.check_files(table, run / "inputs" / t)["not_in_table"] == ["manifest.json"]
+        assert P.check_files(table, run / "inputs" / t)["not_in_table"] == []     # /inputs/ holds inputs only
     assert cards["A"]["task"]["package_sha256"] != cards["B"]["task"]["package_sha256"]   # own inputs per type
 
 

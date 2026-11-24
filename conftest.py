@@ -2,7 +2,7 @@
 
 The tests below read private driver scripts or a private data-source list that
 this read-only mirror does not hold. They are skipped here, by name, with the
-reason. Every other kit test file is byte-identical to kit commit c052221.
+reason. Every other kit test file is byte-identical to kit commit d5f3983.
 """
 import pytest
 

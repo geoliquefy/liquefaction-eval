@@ -92,7 +92,7 @@ card; that waits for the v3 card (B8).
 
 ```
 python -m scoreboard.evalkit.register submit --register R.jsonl ENTRY.json [--csv ENTRY.csv] [--task TASK.json] \
-    [--entrant ID] [--receipt-out receipt.json]
+    [--package DIR [--package-table TABLE.csv]] [--entrant ID] [--receipt-out receipt.json]
 python -m scoreboard.evalkit.register verify --register R.jsonl --receipt receipt.json [--entry ENTRY.json]
 python -m scoreboard.evalkit.register check  --register R.jsonl
 ```
@@ -104,12 +104,35 @@ differs from the task's `package_sha256` (R15). A refused site list prints the h
 task needs, the row count and the recipe. Without `--task` the submit output says "task: not checked". The intake
 checks that an exposure key is a non-empty string; it does not check that it is a ComCat id.
 
-The submit output prints `task_checks` (with `--task`) and `package` beside the receipt. Each check reads PASS, FAIL
-(refused, nothing registered) or NOT CHECKED (registered, and said here). The package hash reads NOT CHECKED when the
-task file names no `package_sha256`, when the manifest is in the kit form (it has no package field), or without
-`--task`. So a closed entry with a made-up package hash still registers against such a task, and its output says
-"package: NOT CHECKED". The intake does not check input files against the package table; an entrant or runner does
-that with `python -m scoreboard.evalkit.package check TABLE.csv DIR` (R15, B3 step 2; see "Package table" below).
+The submit output prints `task_checks` (with `--task`), `package` and `package_files` beside the receipt. Each check
+reads PASS, FAIL (refused, nothing registered) or NOT CHECKED (registered, and said here).
+
+- `package` (the entry's hash against the task's). NOT CHECKED when the task file names no `package_sha256`, or
+  without `--task`. So a closed entry with a made-up package hash still registers against such a task, and its
+  output says "package: NOT CHECKED".
+- `package_files` (D5 intake, wave 11; R15, B3 step 2). On a closed task that names `package_sha256`, the intake
+  rebuilds the package hash from `--package DIR`, the folder of input files the entry read. The rebuild is the kit
+  table of every file in DIR but hidden ones, as `package write` writes it. A hash that differs is refused, with both
+  hashes and the `package check` command to run with the task's table. That command names a changed or missing
+  file. The intake also refuses any file that `package check` lists under `not_in_table`, hidden files apart, though
+  `package check` itself reads PASS for such a file (D5 intake review 1 F2). No `--package` on such a task is refused
+  too. Keep the table file outside DIR: inside, it becomes a row. NOT CHECKED when the task names no package hash;
+  the output then says that a folder given was not used. `--package` on an open task is refused.
+- `--package-table TABLE.csv` (review 1 F1), with `--package`: the task's package table. The intake checks that the
+  table's sha256 is the task's package hash, then runs `package check` on DIR: any FAIL or MISSING row is refused,
+  and so is any non-hidden file outside the table. Use it when the table has a hidden input row (rule book
+  amendment 2, section 4.3 point 5: "by hand"). No rebuild gives such a table, because the rebuild leaves hidden
+  files out.
+- Without `--task` (review 1 F4). A closed rule book form entry registers with "package: NOT CHECKED", because
+  there is no task hash to check against. With `--package DIR` the intake checks the folder against the entry's own
+  `package_sha256` and refuses a mismatch. That shows the folder is the package the entry names, not that it is
+  the task's package: only `--task` shows that. Without `--package` the output says "package_files: NOT CHECKED".
+  `--package` on an entry that names no package hash is refused.
+- A closed kit form entry is refused (ruling 57 c, rule book amendment 2: the package table is required). The kit
+  form manifest has no package hash field, so it cannot name one. A kit form manifest that states division
+  `closed` is refused even without `--task`; one with no division is refused against a closed task. Use the rule
+  book form (B3) on the closed division. The kit form does not gain a package field: that would move every kit form
+  entry hash.
 
 `verify --entry` reads VERIFIED, REGISTER FAULT or ENTRY MISMATCH. ENTRY MISMATCH means the register and the
 receipt's line are intact, but the entry files in hand hash differently from the receipt (they changed after intake,
@@ -152,22 +175,32 @@ On the closed division it takes `package_sha256` from the package table: it is t
 closed task without `--package-table` is refused, and so is a `package_sha256` in FIELDS.json that differs from the
 table's hash. A package table on an open task is refused. So a closed rule book form (B3) entry against a task this
 builder writes never reads "package: NOT CHECKED" at intake (R2, R15; D5 kit review 1 N4; D5 follow-ups, wave 10). A
-closed kit form entry against it still reads NOT CHECKED, because the kit form manifest has no package field. It never replaces a
+closed kit form entry against it is refused (D5 intake, wave 11). It never replaces a
 file: an `--out` path that exists is refused (exit 2). It writes a temporary file beside `--out`, reads it back,
 refuses (and deletes the temporary file) when the task or package hash differs from what it built, and only then
 links the file into place (task builder review 1 N2). `spec.Task` still reads a
 closed task without the field, so every older task file and sealed card keeps its hash. Not built yet: the other
 fields from committed items (R2: site universe and footprint, standing items, census read, ShakeMap rule, rule-book
-version). The kit holds none of these yet, so the caller still gives them.
+version). The kit holds none of these yet, so the caller still gives them. `task_builder.CALLER_FIELDS` lists each
+such field with the committed source R2 names for it, and the builder prints them as `from_caller` on every task it
+writes (D5 intake, wave 11). Each one is a founder question in the pillar step record.
 
 **Package table.** R15: "the closed package is the site id list plus a table of the sha256 of every input file; the
-package hash is the sha256 of that table". The rule book does not fix the table's bytes, so the kit uses one form
-(`package.TABLE_RECIPE`): UTF-8, header `file_id,sha256`, one row per file sorted by `file_id`, `file_id` the path
-inside the package folder with `/`, lowercase hex, every line ending in LF. Every reader refuses a table in another
-form, so one set of files has one package hash. The site id list is the task's `site_list_sha256`, not a row.
+package hash is the sha256 of that table". The kit uses one form (`package.TABLE_RECIPE`), and rule book v1
+amendment 2 (section 4) names it: UTF-8, header `file_id,sha256`, one row per file sorted by `file_id`, `file_id`
+the path inside the package folder with `/`, lowercase hex, every line ending in LF. Every reader refuses a table in
+another form, so one set of files has one package hash. Since ruling 58c a `file_id` is printable ASCII with no
+space and no quote (`"` or `'`): `package write`, the intake rebuild and `package check` refuse a file named
+otherwise, and every reader refuses a table that holds such an id. A symbolic link to a file is a row under its own
+path, hashed as its target's bytes, the same in write, rebuild and check; a link to a folder or to nothing is refused. The site id list is the task's `site_list_sha256`, not a row.
 `package write` leaves out hidden files (any path part that starts with `.`, such as `.DS_Store`), so a stray Finder
 file never becomes a row that a fetcher then reads as MISSING. `package check` reads FAIL when any table file is
-MISSING or differs.
+MISSING or differs. It uses the same walk and tests, with one hidden rule (B4-LAYOUT review 1, F1): a hidden path
+is tested only when the table names it. A hidden path the table does not name (an editor lock that is a broken
+link, a `.Trash 1` folder) is listed under `not_in_table` and never refuses the check, as write and rebuild skip it.
+A non-hidden file the table does not name is listed under `not_in_table` and leaves the status as it is, but only
+when write would accept it: a non-hidden extra with a bad name, a link to a folder or a broken link makes the check
+REFUSED (exit 2), as it makes write and the rebuild refuse (N2).
 
 ```
 python -m scoreboard.evalkit.package write DIR --out TABLE.csv   # never replaces TABLE.csv
@@ -175,15 +208,41 @@ python -m scoreboard.evalkit.package hash TABLE.csv
 python -m scoreboard.evalkit.package check TABLE.csv DIR         # 0 PASS, 1 FAIL (each file named), 2 refused
 ```
 
-On the forward track, `forward.score` builds a closed task with `package_sha256` from the frozen inputs of the type
-(the ShakeMap grid and `cpt_list.csv`, with the sha256 the input manifest froze). It writes that table as
-`scores/<type>/package_table.csv`, and the card's `forward` block names it. A caller `package_sha256` is refused, as
+**Forward input layout (B4, ruling 58c).** `forward.freeze_inputs` writes each input type's folder in the rule
+book B4 layout. That folder is what an entry sees as `/inputs/`:
+
+```
+run/inputs/<type>/                       = /inputs/       FILE_ID (path inside /inputs/)
+  event.json                              comcat_id, origin_utc, lon, lat, depth_km, mw, mw_type
+  shakemap/grid.xml                       the ShakeMap grid (a gzip file given is stored unzipped)
+  sites.csv                               site_id,lon,lat: the run list, sites inside the grid
+  package/cpt_list.csv                    the kit's CPT list (site_id,lat,lon,x_m,y_m) for the kit's own entries
+run/manifests/<type>.json                 input manifest, outside /inputs/; freezes every row and the package hash
+```
+
+`event.json` is the canonical JSON (sorted keys, no spaces, ASCII) of the seven B4 fields, then one LF. Its values
+come from the event the input manifest freezes (`comcat_id` from `id`, `origin_utc` from `time_utc`, `mw` and
+`mw_type` from the watcher's `mag` and `mag_type`). A record with no `depth_km` or no `mag_type` is refused at the
+freeze, before anything is written (B4-LAYOUT review 1, F2): `event.json` never holds a made-up depth of 0 or a null
+`mw_type`. The manifest freezes the sha256 of every file in the folder
+(`inputs.files`) and the package hash of that table (`inputs.package_sha256`). `load_frozen` refuses the run when a
+file changed, went missing or appeared, a hidden file too (N4: the runner alone writes `/inputs/`, so a Finder
+`.DS_Store` there is removed by hand before the run). A run folder in the old kit layout (schema `evalkit-forward-inputs/1`:
+`shakemap_grid.xml`, `cpt_list.csv` and `manifest.json` inside `inputs/<type>/`) is refused with a message that says
+to freeze again into a new run folder. A stray `manifest.json` in a B4 folder that has `manifests/<type>.json` and
+not the old schema is refused as an added file, not as the old layout (N3). Only D4 replays with planted labels ever used that layout; no closed forward
+task exists. A package table such a run wrote stays readable by `package hash` and `package check`: the byte form and
+its ids did not change.
+
+On the forward track, `forward.score` builds a closed task with `package_sha256` from the frozen inputs of the type:
+the table lists all four `/inputs/` files with the sha256 the input manifest froze (one table per task, ruling 58b).
+It writes that table as `scores/<type>/package_table.csv`, and the card's `forward` block names it. `package check
+scores/<type>/package_table.csv inputs/<type>` reads PASS with nothing left over. A caller `package_sha256` is refused, as
 for the event id and site list hash. Limit (D5 follow-ups review 1): `forward.score` does not use the task builder or
 `task_pins.json`. It still takes `clip`, `tile_m` and `seed` from the caller (`forward.TASK_FIELDS_FROM_CALLER`) and
 builds and scores a closed task with any value in range, for example seed 1. So a forward card is not held to the
 amendment 1 pins by the kit. Filling these from `task_builder.load_pins` and refusing a caller value that differs
-waits for the go on amendment 1 section 5.3 point 4. The rule book B4 lists `shakemap/grid.xml` apart from
-`package/`; the forward package table holds both the grid and `cpt_list.csv` (founder question Q-PKG).
+waits for the go on amendment 1 section 5.3 point 4.
 
 **Task hash.** The task hash is not the hash of the task file's bytes. It is not the canonical JSON of the file as
 written either. It is `spec.Task.sha256()`: sha256 of the canonical JSON of the task after the kit reads it. The kit
@@ -283,7 +342,7 @@ per-earthquake cell.
 | R4, B3 (D5, eval M5) | intake in two manifest forms: a rule book form manifest (B3, known by `rule_book_version`) is checked field by field (only `conversion_sha256` and `package_sha256` may be null; extra fields allowed and hashed; values in [0, 1] for every kind) and hashed exactly as submitted by the B3 recipe; the entrant is its `entrant_id`. A kit form manifest keeps its pre-D5 hash. `register hash` prints the form, the hash and the manifest text hashed; `register submit --task` checks site list, exposure key, division, task hash and (closed) package hash. See "Entering and checking an entry" above | `intake.py`, `register.py` | `intake`: all; `d5_kit_step`: all |
 | R2, R15 (D5 review 1 N4; D5 follow-ups wave 10, eval M5) | task builder: `task_builder.build_task` and `write_task` (CLI `python -m scoreboard.evalkit.task_builder`) take `clip`, `tile_m`, `seed` and `tile_rule` from the committed `task_pins.json` (amendment 1) and refuse a caller value that differs; on a closed task they take `package_sha256` from the package table and refuse a closed task without one or a caller hash that differs. Package table (`package.py`): kit form, hash, write, check of files against it. `forward.score` writes `package_sha256` on a closed task from the frozen inputs. `spec.Task` is unchanged. Not built: the other task fields from committed items. See "Task builder" and "Package table" above | `task_builder.py`, `task_pins.json`, `package.py`, `forward.py` | `task_builder`, `package`: all; `forward`: the two package tests |
 | R20 (D3, eval M6) | register and receipt: `python -m scoreboard.evalkit.register submit --register R.jsonl NAME.json` checks the entry through the kit's entry spec (`spec.load_entry`), takes its R4 hash (`spec.entry_sha256`), appends one canonical JSON line to an append-only JSONL register (seq, intake time UTC, item type, item sha256, previous line's sha256, entrant) under a file lock, and prints a receipt (entry hash, line hash, previous-line hash, intake time, seq, entrant). `verify --receipt` checks a receipt against the register (changed, removed, renumbered line: REGISTER FAULT, exit 1; with `--entry`, files in hand that hash differently on an intact register: ENTRY MISMATCH, exit 1); `check` reads the whole chain (seq gaps, broken links, non-canonical lines, a cut last line, intake time that decreases). The intake refuses a broken register and a clock earlier than the head. `--stamp` writes the head to `R.jsonl.heads/` and runs `ots stamp` on it: a publication, founder go only; tests mock it. A stamp that fails after the append still prints the receipt, with `stamp.stamped` false and the error (exit 1, not REFUSED). Not built: the organiser's receipt signature, the public mirror, block time from upgraded proofs; a register line for a refused intake (R20 "prints REFUSED"); receipts appended as register lines; a hash-first intake on the command line (only `append_item` takes a bare hash). One line with a wrong far-future clock blocks later intakes; the recovery is an R14 erratum and a new register that records the old head. Lines removed after the newest receipt are found only by a stamped head | `register.py` | `register`: all |
-| R21 (D4, eval M6) | forward runner: `flagged_events` reads the G5 watcher state.json (read only; CANDIDATE, ALERT, ALERT UNKNOWN or CLASS B); `freeze_inputs` copies the ShakeMap grid and the CPT list into the run folder, keeps sites inside the grid, writes an input manifest and logs its sha256 in an append-only, hash-chained `run_log.jsonl`; `publish_input_hash` writes the anchor text and returns the OpenTimestamps command, run only with `run=True` and a founder go (never in the kit); `freeze_inputs` refuses a record the watcher did not flag unless an override reason is given (logged), and freezes the register prefix (its byte length `n_bytes` and sha256) in the manifest; `predict` runs every counted entry of a D3-shape register (builtin `shaking_score`, `pga_logistic`, or a `package.module:function` hook whose module file hash `code_sha256` is checked before import) on the frozen inputs, takes no labels, refuses once any label file was opened, refuses a register whose frozen prefix changed (lines appended after the freeze are not read: D3 is append only), and logs a predictions sha256. An entry counts only if its intake time is at least 24 h before the origin; a LATE entry is not run and is listed. Each entry runs twice; a second run that differs by more than 1e-9 is RUN FAILED. Types A and B must run the same counted entries. A register written by D3 `evalkit.register` holds hashes only and is read only after D3 `check_register` passes: a recipe counts when an `entry` line's hash equals its `recipe_sha256` (put on by `submit_recipe`: `check_recipe`, then D3 `append_item`, then the D3 receipt; not `submit_entry`, whose hash is the R4 hash of a manifest plus predictions); other entry lines are skipped, a recipe on a line after the frozen prefix is skipped, and a recipe file whose hash is on no line is refused. `score` refuses a type already scored (a card is written once, never replaced), re-checks log, manifest and every prediction file, and only then opens the label file, logs its hash (a refused open too), refuses a label file other than the first one opened in the run, and builds one card per input type with a `forward` block. Type A (frozen inputs, first ShakeMap version) and type B (final inputs) are separate cards, never pooled, and must score the same label file. `scripts/forward_replay.py` replays Feb 2011 (usp000huvq) end to end with a PLANTED label file (corrections 1 and 6), output local only. NOT enforced from R21 (a done D4 does not mean R21 is enforced): OCI images, digests and environment hashes; the sandbox (no network, read-only inputs, 8 CPU, 32 GB, 12 h); the 48 h output limit and the label join only after it; the ShakeMap choice (R21: first version updated at least 24 h after the origin; type A takes the version given, and the manifest records only whether it meets the 24 h rule); the census read at origin plus 7 days; standing items, primaries, retirement, runner and tester rules; a D3 item type for forward recipes | `forward.py`, `scripts/forward_replay.py` | `forward`: all (the blind order is enforced with a Python audit hook on file opens); `d34_joint`: all (real D3 intake, receipt and verify with the runner, blind, types A and B apart, three seams) |
+| R21 (D4, eval M6) | forward runner: `flagged_events` reads the G5 watcher state.json (read only; CANDIDATE, ALERT, ALERT UNKNOWN or CLASS B); `freeze_inputs` writes the B4 `/inputs/` folder (event.json, shakemap/grid.xml, sites.csv, package/cpt_list.csv; see "Forward input layout"), keeps sites inside the grid, writes an input manifest and logs its sha256 in an append-only, hash-chained `run_log.jsonl`; `publish_input_hash` writes the anchor text and returns the OpenTimestamps command, run only with `run=True` and a founder go (never in the kit); `freeze_inputs` refuses a record the watcher did not flag unless an override reason is given (logged), and freezes the register prefix (its byte length `n_bytes` and sha256) in the manifest; `predict` runs every counted entry of a D3-shape register (builtin `shaking_score`, `pga_logistic`, or a `package.module:function` hook whose module file hash `code_sha256` is checked before import) on the frozen inputs, takes no labels, refuses once any label file was opened, refuses a register whose frozen prefix changed (lines appended after the freeze are not read: D3 is append only), and logs a predictions sha256. An entry counts only if its intake time is at least 24 h before the origin; a LATE entry is not run and is listed. Each entry runs twice; a second run that differs by more than 1e-9 is RUN FAILED. Types A and B must run the same counted entries. A register written by D3 `evalkit.register` holds hashes only and is read only after D3 `check_register` passes: a recipe counts when an `entry` line's hash equals its `recipe_sha256` (put on by `submit_recipe`: `check_recipe`, then D3 `append_item`, then the D3 receipt; not `submit_entry`, whose hash is the R4 hash of a manifest plus predictions); other entry lines are skipped, a recipe on a line after the frozen prefix is skipped, and a recipe file whose hash is on no line is refused. `score` refuses a type already scored (a card is written once, never replaced), re-checks log, manifest and every prediction file, and only then opens the label file, logs its hash (a refused open too), refuses a label file other than the first one opened in the run, and builds one card per input type with a `forward` block. Type A (frozen inputs, first ShakeMap version) and type B (final inputs) are separate cards, never pooled, and must score the same label file. `scripts/forward_replay.py` replays Feb 2011 (usp000huvq) end to end with a PLANTED label file (corrections 1 and 6), output local only. NOT enforced from R21 (a done D4 does not mean R21 is enforced): OCI images, digests and environment hashes; the sandbox (no network, read-only inputs, 8 CPU, 32 GB, 12 h); the 48 h output limit and the label join only after it; the ShakeMap choice (R21: first version updated at least 24 h after the origin; type A takes the version given, and the manifest records only whether it meets the 24 h rule); the census read at origin plus 7 days; standing items, primaries, retirement, runner and tester rules; a D3 item type for forward recipes | `forward.py`, `scripts/forward_replay.py` | `forward`: all (the blind order is enforced with a Python audit hook on file opens); `d34_joint`: all (real D3 intake, receipt and verify with the runner, blind, types A and B apart, three seams) |
 | (B5, eval M4) | two optional baselines, off by default (`build_card(..., pgv=None, geo_null=None)` keeps the default card bytes). "baseline: pgv score" = ShakeMap PGV (cm/s, bilinear on the grid), ranking only; "baseline: pgv only" = expit(a + b ln PGV) fitted on earlier earthquakes only with the B4 guards. No fill: a site off the grid or next to an empty node, a grid with no PGV field, no grid, or an earlier earthquake with a missing PGV gives a NOT AVAILABLE object; the card adds no row and the `pgv` block and a note say why. `read_grid` reads grid.xml or a zip, records sha256 and ShakeMap version, refuses Kaikoura (us1000778i, ruling 45 correction 6). The task id (for example feb2011) and the grid ComCat id may differ: pass `shakemap_id`; both ids print. "baseline: geographic null" = minus the distance to the nearest labelled yes site of the earlier earthquakes, each dated strictly before the `scored_date` that `geo_null.build` takes (the eval design R2.2 item 2, Hijmans 2012, quoted in `geo_null.RULE_QUOTE`); exposure SEEN PLACE; the `geographic_null` block adds calibrated AUC = AUC - null AUC + 0.5 per entry with 0.5 plus the paired AUC difference interval. `geo_null.matched_sites` (matched-distance test set, TR 0.33) is built but not wired. Interpretation and TR are not settled: the v3 registration (B8) fixes them. Both rows join the Holm families when passed, so B8 must register whether they are passed. Canterbury is not scored here | `pgv.py`, `geo_null.py`, `card` | `b5_baselines`: all |
 | (B6, eval M4) | breakdowns the field reads, as card tables that name no winner: by PGA bin (g; edges 0.1 to 0.5), by Ic class (Robertson SBTn zone edges 1.31, 2.05, 2.60, 2.95, 3.60), by crust thickness (m; edges 1, 2, 3, 5) and by severity class ("any ejecta" = class 1 or worse, "moderate or worse" = class `moderate_at` or worse, default 2). Each splitting value is a `SiteValues` (one value per site, nan = no value, joined by site id only, with a statement). Every cell prints n; a cell under `floor_n` (30) sites or `floor_per_class` (5) yes or no sites prints "too few" and nothing else. A shown cell prints yes and no counts, tiles, the observed share and each scored row's AUC (plus log loss at the card clip, Brier and mean p for probability rows), each with a 95% tile-bootstrap interval inside the cell. Severity cells are AUC only (R3). Rows keep the card order; `check_no_winner` refuses a best, rank, word, favours or diff key. `build_card(..., breakdowns=breakdowns.Breakdowns(...))` adds the `breakdowns` section; off by default, so older cards (the sealed v2 card among them) keep their bytes. Correction 1: synthetic and planted data only until the v3 registration (B8) is committed alone | `breakdowns.py`, `card` | `breakdowns`: all |
 | (B7, eval M4) | Placement control, off by default. (a) `placement.build(site_ids, x, y, cpt_x, cpt_y, basis=..., proxy=None)` puts every task site (labelled or not; no label read) in a CPT-density stratum: CPTs per km2 within 1000 m, own record within 2 m left out, cut at the 1/3 and 2/3 quantiles over all task sites (a site at a cut goes to the lower stratum; empty strata dropped). `basis` must be named: `pre_event` (the clean control) or `all_index` (descends from the outcome; can explain the proxy, can also remove true skill). Review 1: `pre_event` needs `cpt_dates` and `first_event_date`; `build` keeps only CPTs pushed strictly before that date, leaves undated CPTs out, and prints both counts. `build_card(..., placement=...)` adds a `placement` block: for every non-constant row, AUC overall, the pooled within-strata AUC (weights n_yes,k n_no,k over the sum, as `effort.stratified_auc`) and their paired difference on the card's tile bootstrap; with the investigation-density proxy supplied (allowlist `proxy`, diagnostic only) it prints EXPLAINED BY DENSITY STRATA (90% interval of the within-strata proxy AUC inside 0.5 +/- 0.05), OPEN BIAS (95% interval excludes 0.5; size = within-strata AUC - 0.5 with its interval) or CANNOT TELL, and the share of the proxy's lift the strata remove (NaN with a note when the lift is below 0.05). EXPLAINED is checked first (an equivalence test); `residual_excludes_0.5` flags a residual inside the margin whose 95% interval still excludes 0.5. Limit: quantile strata remove only placement that steps with the strata, so an OPEN BIAS can be placement left inside a stratum (a planted world stepping at 5 levels gives about 0.59 inside 3 strata and about 0.5 inside 5); the stratum count is a choice B8 must register; the strata control density only, and the proxy's `pushed_after_event` stays in the residual. The block does not enter the Holm families. (b) Known limit N4: `placement.imagery_footprint_feature` builds `in_imagery_footprint` from the imagery extent and refuses a footprint equal to the mapped-class union or one that leaves a mapped class outside; `effort.FOOTPRINT_FEATURES` (manifest `pre-event-imagery`) swaps it for `in_aerial_footprint`; `build_card(..., effort_imagery_footprint=True)` makes the effort slot take only that allowlist and adds a card note naming it (refused without an effort row). The union refusal is weak (a slightly buffered union passes); B8 must check the polygon comes from the ECan imagery boundary layer. Tests use planted worlds only (correction 1): placement stepping on the strata cuts gives proxy AUC about 0.72 and about 0.5 inside strata (built in by the alignment). The real proxy AUC (0.72) is not recomputed here; B8 registers the basis and runs it under v3 | `placement.py`, `effort`, `card` | `placement`: all |

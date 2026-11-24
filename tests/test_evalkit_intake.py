@@ -178,8 +178,10 @@ def test_task_checks_site_list_exposure_division_and_task_hash(tmp_path):
     t = make_task(tp)
     good = write(tmp_path, "g", b3(task_sha256=t.sha256()))
     res = intake.check_against_task(intake.read_entry(good, good.with_suffix(".csv")), t)
-    assert {k: v for k, v in res.items() if k != "package"} == dict.fromkeys(res.keys() - {"package"}, "PASS")
+    pk = {"package", "package_files"}
+    assert {k: v for k, v in res.items() if k not in pk} == dict.fromkeys(res.keys() - pk, "PASS")
     assert res["package"].startswith(intake.NOT_CHECKED)              # this task names no package hash
+    assert res["package_files"].startswith(intake.NOT_CHECKED)        # nothing to rebuild against
     r = tmp_path / "r.jsonl"
     assert reg.submit_entry(r, good, task=tp, now=clock())["seq"] == 1
     cases = {
@@ -243,9 +245,9 @@ def test_submit_says_so_when_the_files_change_after_the_append(tmp_path, capsys,
     mp = write(tmp_path, "entry", B3_MANIFEST)
     real = reg._finish_submit
 
-    def change_then_finish(a, rec):
+    def change_then_finish(a, rec, *rest):
         (tmp_path / "entry.csv").write_text(B3_CSV.replace("0.412", "0.5"), encoding="utf-8")
-        return real(a, rec)
+        return real(a, rec, *rest)
     monkeypatch.setattr(reg, "_finish_submit", change_then_finish)
     assert reg.main(["submit", "--register", str(tmp_path / "r.jsonl"), str(mp)]) == 0
     out = json.loads(capsys.readouterr().out)

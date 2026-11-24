@@ -47,6 +47,15 @@ Entry hash (D5): intake.read_entry. A rule book form manifest (B3) is hashed exa
 a kit form manifest is hashed after the kit fills conversion_id and division as null when absent. `hash` prints the
 manifest text that was hashed, the predictions file read and the entry's site list hash (spec.SITE_LIST_RECIPE).
 
+Closed entries (D5 intake, wave 11; R15, B3 step 2; ruling 57 c). A kit form manifest that states division
+"closed" is refused: it has no package hash field. With --task on a closed task that names a package hash, the
+intake needs --package DIR: it rebuilds the package hash from the files in DIR (hidden files left out, the kit
+table form) and refuses a hash that differs from the task's. With --package-table TABLE.csv (the task's table) it
+checks that the table's hash is the task's, then checks each file against the table: this serves a table with a
+hidden input row (rule book amendment 2, section 4.3 point 5). Without --task, --package checks the folder against
+a closed rule book form entry's own package_sha256; a closed entry without --task and without --package is
+registered with package NOT CHECKED. See intake.package_files_check and intake.entry_package_files_check.
+
 Predictions file (D5 kit step, dry run 2 point 9): `--csv PATH` if given; else NAME.csv beside NAME.json; else, for a
 manifest named manifest.json (the rule book B3 names), entry.csv beside it. A refusal names every file it looked for.
 
@@ -58,7 +67,7 @@ reasons.
 
 Command line (run from the repo root without -I: isolated mode drops the current directory from the import path):
   python -m scoreboard.evalkit.register submit  --register R.jsonl ENTRY.json [--csv ENTRY.csv]
-        [--entrant ID] [--task TASK.json] [--receipt-out receipt.json] [--stamp]
+        [--entrant ID] [--task TASK.json] [--package DIR] [--receipt-out receipt.json] [--stamp]
   python -m scoreboard.evalkit.register hash    ENTRY.json [--csv ENTRY.csv]
   python -m scoreboard.evalkit.register verify  --register R.jsonl --receipt receipt.json
         [--entry ENTRY.json [--csv ENTRY.csv]]
@@ -322,16 +331,36 @@ def _entrant_for(it: "_intake.Intake", entrant: str | None) -> str | None:
 
 
 def submit_entry(register: str | Path, manifest_path: str | Path, csv_path: str | Path | None = None, *,
-                 entrant: str | None = None, task: str | Path | None = None,
+                 entrant: str | None = None, task: str | Path | None = None, package: str | Path | None = None,
+                 package_table: str | Path | None = None, checks_out: dict | None = None,
                  now: Callable[[], datetime] = _now) -> dict:
-    """Intake: check the entry's schema (and, with `task`, the entry against that task file), hash it as its
-    manifest form says, append it to the register, return the receipt."""
+    """Intake: check the entry's schema (and, with `task`, the entry against that task file and, on a closed task
+    that names a package hash, the submitted `package` folder against it, through `package_table` when given),
+    hash it as its manifest form says, append it to the register, return the receipt. A kit form manifest that
+    states division "closed" is refused (it cannot name a package hash; D5 intake, wave 11). Without `task`,
+    `package` is checked against a closed rule book form entry's own package_sha256 (D5 intake review 1 F4).
+    `checks_out`, when given, is filled with the checks the intake ran, so the caller prints them without hashing
+    the package a second time (review 1 F5)."""
     it = read_entry_files(manifest_path, csv_path)
+    if it.form != _intake.RULEBOOK_FORM and it.entry.manifest.division == "closed":
+        raise RegisterError(_intake.CLOSED_KIT_FORM)
     if task is not None:
-        bad = _intake.task_failures(_intake.check_against_task(it, load_task(task)))
+        checks = _intake.check_against_task(it, load_task(task), package, package_table)
+        bad = _intake.task_failures(checks)
         if bad:
             raise RegisterError("the entry does not fit the task file: " + "; ".join(bad))
-    return append_item(register, "entry", it.entry_sha256, entrant=_entrant_for(it, entrant), now=now)
+    else:
+        checks = {"package": f"{_intake.NOT_CHECKED}: no --task given (R15)"}
+        pf = _intake.entry_package_files_check(it, package, package_table)
+        if pf != _intake.PASS or package is not None or package_table is not None:
+            checks["package_files"] = pf                # left out only when there is nothing to check
+        bad = _intake.task_failures(checks)
+        if bad:
+            raise RegisterError("the entry's package does not fit: " + "; ".join(bad))
+    rec = append_item(register, "entry", it.entry_sha256, entrant=_entrant_for(it, entrant), now=now)
+    if checks_out is not None:
+        checks_out.update(checks)
+    return rec
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -427,9 +456,11 @@ def stamp_head(register: str | Path, *, ots_bin: str = "ots",
 # Command line
 # ---------------------------------------------------------------------------------------------------------------
 
-def _finish_submit(a: argparse.Namespace, rec: dict) -> int:
+def _finish_submit(a: argparse.Namespace, rec: dict, checks: dict | None = None) -> int:
     """After the line is in the register: always print the receipt. A failed receipt file write or stamp does not
-    undo the line, so it is reported beside the receipt (exit 1), never as REFUSED (exit 2)."""
+    undo the line, so it is reported beside the receipt (exit 1), never as REFUSED (exit 2). `checks` are the checks
+    `submit_entry` ran before the append; they are printed as run, never run again (review 1 F5)."""
+    checks = checks or {}
     out: dict = {"receipt": rec}
     try:
         it = read_entry_files(a.entry, a.csv)
@@ -439,11 +470,10 @@ def _finish_submit(a: argparse.Namespace, rec: dict) -> int:
                              "task": "checked" if a.task else "not checked (no --task given)",
                              "receipt_signed": False, "register_public": False}
             if a.task:
-                checks = _intake.check_against_task(it, load_task(a.task))
                 out["intake"]["task_checks"] = checks
-                out["intake"]["package"] = checks["package"]
-            else:
-                out["intake"]["package"] = f"{_intake.NOT_CHECKED}: no --task given (R15)"
+            out["intake"]["package"] = checks.get("package", f"{_intake.NOT_CHECKED}: no --task given (R15)")
+            if "package_files" in checks:
+                out["intake"]["package_files"] = checks["package_files"]
         else:                                    # the files changed between the append and the re-read
             out["intake"] = {"error": "the line is registered, but the entry files changed after the append: they "
                                       f"now hash to {it.entry_sha256}, not the receipt's {rec['entry_sha256']}; "
@@ -483,6 +513,16 @@ def main(argv: list[str] | None = None) -> int:
                                    "task_sha256 or (closed) package_sha256 does not fit it. Site list hash: sha256 "
                                    "of the SORTED site ids, each followed by a newline; row order does not matter "
                                    "for it (it does for the entry hash). `hash ENTRY.json` prints it")
+    sb.add_argument("--package", help="closed division: the package folder the entry read (the input files as "
+                                      "fetched; keep the package table outside it). With --task, the intake "
+                                      "rebuilds the package hash from it and refuses a hash that differs from the "
+                                      "task's (R15, B3 step 2). Required on a closed task that names a package "
+                                      "hash. Without --task, it is checked against the entry's own package_sha256")
+    sb.add_argument("--package-table", help="closed division, with --package: the task's package table. The intake "
+                                            "checks that its hash is the package hash, then checks each file in "
+                                            "--package against it: no FAIL or MISSING row, no non-hidden file "
+                                            "outside the table. Use it when the table has a hidden input row "
+                                            "(rule book amendment 2, section 4.3 point 5)")
     sb.add_argument("--receipt-out")
     sb.add_argument("--stamp", action="store_true",
                     help="after the append, stamp the head with OpenTimestamps (a publication: founder go only)")
@@ -504,8 +544,10 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     try:
         if a.cmd == "submit":
-            rec = submit_entry(a.register, a.entry, a.csv, entrant=a.entrant, task=a.task)
-            return _finish_submit(a, rec)
+            checks: dict = {}
+            rec = submit_entry(a.register, a.entry, a.csv, entrant=a.entrant, task=a.task, package=a.package,
+                               package_table=a.package_table, checks_out=checks)
+            return _finish_submit(a, rec, checks)
         if a.cmd == "hash":
             if a.entry is None and a.task is None:
                 raise RegisterError("hash needs an entry manifest, --task TASK.json, or both")

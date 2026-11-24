@@ -86,6 +86,26 @@ type A takes the version it is given, and the manifest only records whether that
 the census read at origin plus 7 days; standing items, site universes, primaries and retirement; the runner and
 tester rules. A done D4 does not mean R21 is enforced.
 
+B4 input layout (ruling 58c, wave 12). `freeze_inputs` writes each type's input folder `inputs/<type>/` in the
+rule book B4 layout, the folder an entry sees as `/inputs/`:
+
+    inputs/<type>/event.json            comcat_id, origin_utc, lon, lat, depth_km, mw, mw_type (from the event the
+                                        input manifest freezes; canonical JSON plus one LF)
+    inputs/<type>/shakemap/grid.xml     the ShakeMap grid given (a gzip file is stored unzipped, so the name is true;
+                                        the manifest keeps the given file's sha256 as source_sha256)
+    inputs/<type>/sites.csv             site_id,lon,lat: the run list (sites inside the grid), LF
+    inputs/<type>/package/cpt_list.csv  the kit's CPT list (site_id,lat,lon,x_m,y_m) for the kit's own entries
+
+The input manifest is written apart, as `manifests/<type>.json`, so `/inputs/` holds only entry inputs. It freezes
+the sha256 of every file in the folder (`inputs.files`) and the package hash of that table (`inputs.package_sha256`,
+amendment 2 byte form). FILE_ID is the path inside `/inputs/` (amendment 2 section 5.3; review F2), so the package
+table of a closed forward task lists all four files: one table per task (ruling 58b). `load_frozen` refuses a
+folder whose files differ from the frozen table in any way (a changed, missing or added file).
+Old layout (schema evalkit-forward-inputs/1: `shakemap_grid.xml`, `cpt_list.csv` and `manifest.json` inside
+`inputs/<type>/`) is REFUSED with a clear message, not read: freeze again into a new run folder. Only D4 replay runs
+with planted labels ever used it; no closed forward task exists. Any package table such a run wrote stays readable by
+`python -m scoreboard.evalkit.package hash` and `check` (the byte form and its ids did not change).
+
 Publishing the input hash is wired, not run: `publish_input_hash` writes the anchor text and returns the
 OpenTimestamps command; it runs the command only with `run=True` and a non-empty `go`, which nothing in the kit or
 its tests passes (ruling 45: PUBLISH items wait for a founder go).
@@ -112,7 +132,8 @@ from . import shaking
 from .spec import (Entry, EntryManifest, SpecError, Task, canonical_json, entry_sha256, load_entry,
                    load_labels, save_entry, site_list_sha256)
 
-SCHEMA_INPUTS = "evalkit-forward-inputs/1"
+SCHEMA_INPUTS = "evalkit-forward-inputs/2"          # B4 layout (ruling 58c)
+SCHEMA_INPUTS_OLD = "evalkit-forward-inputs/1"      # kit layout before ruling 58c: refused, not read
 SCHEMA_PREDICTIONS = "evalkit-forward-predictions/1"
 INPUT_TYPES = {
     "A": "frozen inputs: the first ShakeMap version and the CPT list known at the flag",
@@ -122,6 +143,12 @@ WATCH_FLAG_STATUSES = ("CANDIDATE", "ALERT", "ALERT UNKNOWN")   # g5_watch.FLAG_
 WATCH_CLASS_B_FLAG = "CLASS B"                                   # g5_class_b.FLAG
 ZERO = "0" * 64
 CPT_HEADER = ["site_id", "lat", "lon", "x_m", "y_m"]
+SITES_HEADER = ["site_id", "lon", "lat"]                       # B4 step 2: sites.csv
+B4_EVENT, B4_GRID, B4_SITES, B4_CPT = "event.json", "shakemap/grid.xml", "sites.csv", "package/cpt_list.csv"
+B4_FILES = (B4_EVENT, B4_CPT, B4_GRID, B4_SITES)               # sorted: the rows of the forward package table
+# B4 event.json field: the kit event field it comes from (event_of)
+EVENT_JSON_FIELDS = {"comcat_id": "id", "origin_utc": "time_utc", "lon": "lon", "lat": "lat",
+                     "depth_km": "depth_km", "mw": "mag", "mw_type": "mag_type"}
 LOG = "run_log.jsonl"
 
 
@@ -176,6 +203,14 @@ def event_of(rec: dict) -> dict:
             "mag_type": rec.get("mag_type"), "lat": float(rec["lat"]), "lon": float(rec["lon"]),
             "depth_km": float(rec.get("depth_km") or 0.0), "watch_status": rec.get("status"),
             "watch_class_b": (rec.get("class_b") or {}).get("flag")}
+
+
+def event_json_bytes(ev: dict) -> bytes:
+    """The B4 `event.json` bytes for a frozen kit event (`event_of`): canonical JSON (sorted keys, no spaces, ASCII)
+    of the seven B4 fields, then one LF. `mw` and `mw_type` are the watcher's magnitude and its type as given (the
+    census read freezes them; a magnitude of another type keeps its own mw_type)."""
+    d = {k: ev.get(src) for k, src in EVENT_JSON_FIELDS.items()}
+    return (canonical_json(d) + "\n").encode("utf-8")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -255,6 +290,24 @@ def write_cpt_list(path: str | Path, site_ids, lat, lon, x_m, y_m) -> None:
     Path(path).write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
+def write_sites(path: str | Path, site_ids, lon, lat) -> None:
+    """B4 `sites.csv`: header site_id,lon,lat, one row per site in run order, LF line ends, the last one too."""
+    rows = [",".join(SITES_HEADER)] + [f"{s},{float(a)!r},{float(b)!r}" for s, a, b in zip(site_ids, lon, lat)]
+    with open(path, "x", encoding="utf-8", newline="") as f:
+        f.write("\n".join(rows) + "\n")
+
+
+def read_sites(path: str | Path) -> tuple[str, ...]:
+    """Site ids of a B4 `sites.csv`, in run order. Refuses another header or a repeated id."""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].split(",") != SITES_HEADER:
+        raise SpecError(f"{path}: sites.csv header must be {','.join(SITES_HEADER)} (B4 step 2)")
+    ids = tuple(ln.split(",")[0] for ln in lines[1:] if ln.strip())
+    if len(set(ids)) != len(ids):
+        raise SpecError(f"{path}: duplicate site ids in sites.csv")
+    return ids
+
+
 def read_cpt_list(path: str | Path) -> dict:
     lines = Path(path).read_text(encoding="utf-8").splitlines()
     if not lines or lines[0].split(",") != CPT_HEADER:
@@ -305,7 +358,35 @@ def _steps(log: list[dict], step: str, input_type: str) -> list[dict]:
 # ---------------------------------------------------------------------------------------------------------------
 
 def _inputs_dir(run_dir: Path, t: str) -> Path:
+    """The type's B4 input folder: what an entry sees as /inputs/."""
     return Path(run_dir) / "inputs" / t
+
+
+def _manifest_path(run_dir: Path, t: str) -> Path:
+    """The type's input manifest, kept outside /inputs/ (it is the runner's record, not an entry input)."""
+    return Path(run_dir) / "manifests" / f"{t}.json"
+
+
+def _refuse_old_layout(run_dir: Path, t: str) -> None:
+    """Refuse a type frozen in the kit layout before ruling 58c (schema evalkit-forward-inputs/1).
+
+    A `manifest.json` inside a B4 folder is not called the old layout when the type has a new manifest
+    (manifests/<type>.json) and the file does not carry the old schema (B4-LAYOUT review 1, N3): it is an added file,
+    and `load_frozen` refuses it as one."""
+    old = _inputs_dir(run_dir, t) / "manifest.json"
+    if old.exists():
+        try:
+            schema = json.loads(old.read_text(encoding="utf-8")).get("schema")
+        except (OSError, ValueError, AttributeError):
+            schema = "unreadable"
+        if schema != SCHEMA_INPUTS_OLD and _manifest_path(run_dir, t).exists():
+            return
+        raise RunRefused(
+            f"type {t}: {old} is an input manifest in the old kit layout ({schema}: shakemap_grid.xml and "
+            f"cpt_list.csv, manifest inside the input folder). Since ruling 58c the forward runner reads only the B4 "
+            f"/inputs/ layout ({SCHEMA_INPUTS}: event.json, shakemap/grid.xml, sites.csv, package/). The old layout "
+            f"is refused, not read: freeze the inputs again into a new run folder. A package table it wrote stays "
+            f"readable by 'python -m scoreboard.evalkit.package hash' and 'check'")
 
 
 def _utc(s: str | None) -> datetime | None:
@@ -330,69 +411,114 @@ def _shakemap_24h(grid_header: dict, origin_utc: str) -> str:
 def freeze_inputs(run_dir: str | Path, flag_record: dict, shakemap_grid: str | Path, cpt_list: str | Path, *,
                   input_type: str, register_path: str | Path, shakemap_note: str = "",
                   override_reason: str = "") -> dict:
-    """Copy the inputs into the run folder, write the input manifest and log its sha256.
+    """Write the type's B4 input folder, write the input manifest and log its sha256.
 
     Type A takes the first ShakeMap version; type B the final one. A type is frozen once. The CPT list keeps only
     sites inside the ShakeMap grid (the count left out is in the manifest). The register file's sha256 is frozen in
     the manifest; `predict` refuses any other register. A record the watcher did not flag (`is_flagged`) is refused
-    unless `override_reason` says why; the reason goes into the manifest and the log. Returns the manifest and hash.
+    unless `override_reason` says why; the reason goes into the manifest and the log. A record with no `depth_km` or
+    no `mag_type` is refused (B4-LAYOUT review 1, F2): event.json never carries a made-up depth or a null mw_type.
+    `event_of` itself is unchanged for its other callers. Returns the manifest and hash.
     """
     t = _type(input_type)
     run_dir = Path(run_dir)
     flagged = is_flagged(flag_record)
     if not flagged and not override_reason.strip():
         raise RunRefused("the watcher record is not flagged (is_flagged); pass override_reason to freeze it anyway")
+    for k, field_ in (("depth_km", "depth_km"), ("mag_type", "mw_type")):     # B4-LAYOUT review 1, F2
+        v = flag_record.get(k)
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise RunRefused(f"the watcher record has no {k!r}: event.json would carry a made-up {field_} (B4 step 2 "
+                             f"freezes it from the census read). Add the census-read value to the record and freeze "
+                             f"again; nothing was written")
     run_dir.mkdir(parents=True, exist_ok=True)
+    for u in INPUT_TYPES:                                 # one layout per run folder
+        _refuse_old_layout(run_dir, u)
     if _steps(read_log(run_dir), "inputs_frozen", t):
         raise RunRefused(f"type {t} inputs are already frozen; a frozen input is never replaced")
     ev = event_of(flag_record)
+    src = Path(shakemap_grid).read_bytes()
+    gz = src[:2] == b"\x1f\x8b"
     grid = read_grid(shakemap_grid)
     if grid.header.get("event_id") and grid.header["event_id"] != ev["id"]:
         raise RunRefused(f"ShakeMap event id {grid.header['event_id']!r} is not the flagged {ev['id']!r}")
     cpt = read_cpt_list(cpt_list)
     pga = grid.sample(cpt["lat"], cpt["lon"])
     keep = np.isfinite(pga)
-    d = _inputs_dir(run_dir, t)
-    d.mkdir(parents=True, exist_ok=True)
-    gname = "shakemap_grid.xml" + (".gz" if Path(shakemap_grid).read_bytes()[:2] == b"\x1f\x8b" else "")
-    shutil.copyfile(shakemap_grid, d / gname)
-    write_cpt_list(d / "cpt_list.csv", [s for s, k in zip(cpt["site_ids"], keep) if k],
-                   *(cpt[c][keep] for c in ("lat", "lon", "x_m", "y_m")))
     kept_ids = tuple(s for s, k in zip(cpt["site_ids"], keep) if k)
     if not kept_ids:
         raise RunRefused("no CPT lies inside the ShakeMap grid")
+    d = _inputs_dir(run_dir, t)
+    if d.exists() and any(d.iterdir()):
+        raise RunRefused(f"type {t}: {d} is not empty but no freeze is logged (a stopped freeze?). The /inputs/ "
+                         f"folder is written once; move it aside by hand and freeze again")
+    (d / "shakemap").mkdir(parents=True, exist_ok=True)
+    (d / "package").mkdir(exist_ok=True)
+    (d / B4_EVENT).write_bytes(event_json_bytes(ev))
+    (d / B4_GRID).write_bytes(gzip.decompress(src) if gz else src)
+    write_sites(d / B4_SITES, kept_ids, cpt["lon"][keep], cpt["lat"][keep])
+    write_cpt_list(d / B4_CPT, list(kept_ids), *(cpt[c][keep] for c in ("lat", "lon", "x_m", "y_m")))
+    rows = _package.folder_rows(d)
+    if tuple(rows) != B4_FILES:
+        raise RunRefused(f"type {t}: {d} holds {sorted(rows)}, not the B4 files {list(B4_FILES)}")
     manifest = {
-        "schema": SCHEMA_INPUTS, "rule": "R21", "input_type": t, "input_type_meaning": INPUT_TYPES[t],
+        "schema": SCHEMA_INPUTS, "rule": "R21", "layout": "B4 (ruling 58c)", "input_type": t,
+        "input_type_meaning": INPUT_TYPES[t],
         "event": ev, "flag": {"flagged": flagged, "override_reason": override_reason.strip() or None},
-        "shakemap": {"file": gname, "sha256": _sha_file(d / gname), **grid.header, "note": shakemap_note,
+        "inputs": {"root": "/inputs/", "files": rows, "package_sha256": _package.table_sha256_of_rows(rows),
+                   "table_form": "rule book v1 amendment 2, section 4 (package.TABLE_RECIPE)"},
+        "event_json": {"file": B4_EVENT, "fields_from_event": EVENT_JSON_FIELDS},
+        "shakemap": {"file": B4_GRID, "source_sha256": _sha_bytes(src), "source_gzip": gz, **grid.header,
+                     "note": shakemap_note,
                      "r21_updated_24h_after_origin": _shakemap_24h(grid.header, ev["time_utc"])},
-        "cpt_list": {"file": "cpt_list.csv", "sha256": _sha_file(d / "cpt_list.csv"), "n_sites": len(kept_ids),
-                     "n_outside_grid": int((~keep).sum()), "site_list_sha256": site_list_sha256(kept_ids)},
+        "sites": {"file": B4_SITES, "n_sites": len(kept_ids), "n_outside_grid": int((~keep).sum()),
+                  "site_list_sha256": site_list_sha256(kept_ids)},
+        "cpt_list": {"file": B4_CPT, "columns": CPT_HEADER, "why": "the kit's own entries read x_m and y_m"},
         "register": {"sha256": _sha_file(Path(register_path)), "n_bytes": Path(register_path).stat().st_size},
         "frozen_utc": _now(),
     }
     mh = _sha_json(manifest)
-    (d / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    mp = _manifest_path(run_dir, t)
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    mp.write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     extra = {} if flagged else {"override_reason": override_reason.strip()}
     _append(run_dir, "inputs_frozen", t, mh, **extra)
     return {"manifest": manifest, "manifest_sha256": mh}
 
 
 def load_frozen(run_dir: str | Path, input_type: str) -> tuple[dict, str]:
-    """The frozen manifest of one type, after checking it and both input files against the log and manifest."""
+    """The frozen manifest of one type, after checking it against the log and every /inputs/ file against it.
+
+    The folder's table (package.folder_rows: the same walk as `package write`) must equal the frozen one exactly:
+    a changed, missing or added file is refused. An added hidden file is refused too (B4-LAYOUT review 1, N4): the
+    runner alone writes /inputs/. An old-layout type is refused (`_refuse_old_layout`)."""
     t = _type(input_type)
     run_dir = Path(run_dir)
+    _refuse_old_layout(run_dir, t)
     log = _steps(read_log(run_dir), "inputs_frozen", t)
     if not log:
         raise RunRefused(f"type {t}: no inputs frozen")
-    d = _inputs_dir(run_dir, t)
-    manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(_manifest_path(run_dir, t).read_text(encoding="utf-8"))
     mh = _sha_json(manifest)
     if mh != log[0]["sha256"]:
         raise RunRefused(f"type {t}: the input manifest changed after the freeze")
-    for k in ("shakemap", "cpt_list"):
-        if _sha_file(d / manifest[k]["file"]) != manifest[k]["sha256"]:
-            raise RunRefused(f"type {t}: {manifest[k]['file']} changed after the freeze")
+    if manifest.get("schema") != SCHEMA_INPUTS:
+        raise RunRefused(f"type {t}: input manifest schema {manifest.get('schema')!r}, this kit reads {SCHEMA_INPUTS}")
+    want = manifest["inputs"]["files"]
+    d = _inputs_dir(run_dir, t)
+    added_hidden = [f for f in _package.hidden_ids(d) if f not in want]    # B4-LAYOUT review 1, N4
+    if added_hidden:
+        raise RunRefused(f"type {t}: /inputs/ holds hidden files the freeze did not write ({', '.join(added_hidden)}). "
+                         f"An entry sees every file in /inputs/, so the runner's folder takes no added file, hidden "
+                         f"or not (a Finder .DS_Store too). Remove them and run again")
+    try:
+        have = _package.folder_rows(d)
+    except SpecError as e:
+        raise RunRefused(f"type {t}: the /inputs/ folder cannot be read as a package: {e}") from None
+    if have != want:
+        diff = sorted(f for f in set(want) | set(have) if want.get(f) != have.get(f))
+        raise RunRefused(f"type {t}: /inputs/ changed after the freeze ({', '.join(diff)}: a file differs, "
+                         f"appeared or went missing)")
     return manifest, mh
 
 
@@ -679,8 +805,10 @@ class FrozenInputs:
 def frozen_inputs(run_dir: str | Path, input_type: str) -> FrozenInputs:
     manifest, mh = load_frozen(run_dir, input_type)
     d = _inputs_dir(Path(run_dir), input_type)
-    cpt = read_cpt_list(d / "cpt_list.csv")
-    pga = read_grid(d / manifest["shakemap"]["file"]).sample(cpt["lat"], cpt["lon"])
+    cpt = read_cpt_list(d / B4_CPT)
+    if read_sites(d / B4_SITES) != cpt["site_ids"]:
+        raise RunRefused(f"type {input_type}: sites.csv and package/cpt_list.csv name other sites")
+    pga = read_grid(d / B4_GRID).sample(cpt["lat"], cpt["lon"])
     return FrozenInputs(input_type, manifest["event"], cpt["site_ids"], cpt["lat"], cpt["lon"], cpt["x_m"],
                         cpt["y_m"], pga, mh)
 
@@ -837,10 +965,11 @@ def score(run_dir: str | Path, labels_path: str | Path, input_type: str, task_pa
     `task_params` gives the task fields the runner cannot know (TASK_FIELDS_FROM_CALLER, plus optional Task fields
     such as n_boot or min_sites); event id, site list hash and track ("forward") come from the frozen inputs.
     On the closed division (the default) the package hash comes from the frozen inputs too (R2, R15; D5 follow-ups,
-    wave 10): the package table (evalkit.package kit form) holds this type's two frozen input files, the ShakeMap grid
-    and cpt_list.csv, with the sha256 the input manifest froze; package_sha256 is the sha256 of that table. The table
-    is written as `scores/<type>/package_table.csv`, so `python -m scoreboard.evalkit.package check` can check the
-    frozen inputs against it. An open task names no package hash.
+    wave 10; B4 layout, ruling 58c): the package table (amendment 2 byte form) lists every file of this type's B4
+    /inputs/ folder (event.json, package/cpt_list.csv, shakemap/grid.xml, sites.csv; FILE_ID is the path inside
+    /inputs/), with the sha256 the input manifest froze; package_sha256 is the sha256 of that table. The table is
+    written as `scores/<type>/package_table.csv`, so `python -m scoreboard.evalkit.package check TABLE inputs/<type>`
+    checks the frozen inputs against it with nothing left over. An open task names no package hash.
     Limit (D5 follow-ups review 1): clip, tile_m and seed still come from the caller, not from task_pins.json
     (rule book v1 amendment 1); this runner does not refuse a value that differs from the pins. Filling them from
     task_builder.load_pins waits for the go on amendment 1 section 5.3 point 4.
@@ -863,11 +992,13 @@ def score(run_dir: str | Path, labels_path: str | Path, input_type: str, task_pa
     division = task_params.get("division", "closed")
     pkg = {}
     if division == "closed":                             # R2, R15: a closed task names its package hash
-        pkg_rows = {manifest[k]["file"]: manifest[k]["sha256"] for k in ("shakemap", "cpt_list")}
+        pkg_rows = manifest["inputs"]["files"]
         pkg_text = _package.table_text(pkg_rows)
         pkg = {"package_sha256": _package.table_sha256_of_rows(pkg_rows)}
+        if pkg["package_sha256"] != manifest["inputs"]["package_sha256"]:
+            raise RunRefused(f"type {t}: the frozen package hash does not match its own rows")
     task = Task.from_dict({**task_params, "event_id": manifest["event"]["id"],
-                           "site_list_sha256": manifest["cpt_list"]["site_list_sha256"], "track": "forward",
+                           "site_list_sha256": manifest["sites"]["site_list_sha256"], "track": "forward",
                            "division": division, **pkg})
     raw = Path(labels_path).read_bytes()                 # first open of the label file
     lh = _sha_bytes(raw)

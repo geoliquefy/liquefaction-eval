@@ -127,7 +127,7 @@ def test_every_closed_task_written_names_its_package_hash(tmp_path, table, capsy
     assert {k: on_disk[k] for k in PINS} == PINS
     t = load_task(tmp_path / "t.json")
     assert res == {"task_sha256": t.sha256(), "package_sha256": pkg, "division": "closed",
-                   "card_version": "later", "path": str(tmp_path / "t.json")}
+                   "card_version": "later", "path": str(tmp_path / "t.json"), "from_caller": sorted(FIELDS)}
     assert t.sha256() == Task.from_dict(dict(FIELDS, package_sha256=pkg, **PINS)).sha256()   # nothing added
     fp = tmp_path / "fields.json"
     fp.write_text(json.dumps(FIELDS), encoding="utf-8")
