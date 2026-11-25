@@ -17,7 +17,7 @@ EV = "synth-fwd-1"
 FLAG = {"id": EV, "time_utc": "2030-01-01T00:00:00Z", "mag": 6.4, "mag_type": "mww", "lat": -40.0, "lon": 175.0,
         "depth_km": 8.0, "status": "CANDIDATE", "class_b": {"flag": "CLASS B"}, "cpts": {"n_cpt": 400}}
 TASK = {"target": "surface manifestation", "label_source": "planted-synthetic", "label_rule_sha256": "0" * 64,
-        "tile_m": 1000.0, "clip": 1e-3, "seed": 7, "label_caveats": "planted synthetic labels; a test, not a result",
+        "tile_m": 4000.0, "clip": 1e-6, "seed": 20261106, "label_caveats": "planted synthetic labels; a test, not a result",
         "n_boot": 60, "min_sites": 50, "min_per_class": 10, "min_tiles": 5}
 
 
@@ -328,7 +328,8 @@ def test_predict_after_labels_opened_is_refused_and_runs_once(setup):
 
 def test_predict_takes_no_labels_and_entries_see_no_labels():
     import inspect
-    assert list(inspect.signature(F.predict).parameters) == ["run_dir", "register_path", "input_type", "recipes_dir"]
+    assert list(inspect.signature(F.predict).parameters) == ["run_dir", "register_path", "input_type", "recipes_dir",
+                                                             "sandbox", "sandbox_opts"]   # B4 sandbox (ruling 59a)
     assert not any("label" in f for f in F.FrozenInputs.__dataclass_fields__)
 
 

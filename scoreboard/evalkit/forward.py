@@ -79,8 +79,10 @@ R21 parts enforced here: the register prefix sha256 is frozen in each input mani
 register; an entry counts only if its intake time is at least 24 h before the origin (R5, R21), and a LATE entry
 is not run and is listed with its intake time; a python entry's code hash is checked; every entry runs twice, and
 an entry whose two runs differ by more than 1e-9 is RUN FAILED (not saved, not scored); types A and B must run the
-same counted entries. R21 parts NOT enforced: OCI images, digests and environment hashes (entries run in this
-Python process); the sandbox (no network, read-only inputs, 8 CPU, 32 GB, 12 h); the 48 h output limit and the
+same counted entries. B4 sandbox (ruling 59a, wave 13): every run of every entry is a new process that sees only a
+read-only copy of /inputs/ and writes only /outputs/ (evalkit.sandbox; README "B4 sandbox"); an entry that reads,
+lists or writes outside, opens a socket or starts a process is SANDBOX REFUSED, listed and not scored. R21 parts NOT
+enforced: OCI images, digests and environment hashes; CPU and memory limits outside container mode; the 48 h output limit and the
 label join only after it; the ShakeMap choice (R21 takes the first version updated at least 24 h after the origin;
 type A takes the version it is given, and the manifest only records whether that version meets the 24 h rule);
 the census read at origin plus 7 days; standing items, site universes, primaries and retirement; the runner and
@@ -128,6 +130,8 @@ import numpy as np
 
 from . import package as _package
 from . import register as _register
+from . import sandbox as _sandbox
+from . import task_builder as _task_builder
 from . import shaking
 from .spec import (Entry, EntryManifest, SpecError, Task, canonical_json, entry_sha256, load_entry,
                    load_labels, save_entry, site_list_sha256)
@@ -641,13 +645,15 @@ def submit_recipe(register_path: str | Path, recipe: dict, *, entrant: str | Non
 
 
 def callable_sha256(spec: str) -> str:
-    """sha256 of the bytes of the module file that holds a 'package.module:function' callable. Does not import it."""
-    import importlib.util
+    """sha256 of the bytes of the module file that holds a 'package.module:function' callable.
+
+    Imports nothing: the file is found folder by folder (sandbox.module_file), so no parent package `__init__.py`
+    runs in the kit process (B4 sandbox review 1, B1). Only a `.py` source file is accepted."""
     mod = str(spec).partition(":")[0]
-    found = importlib.util.find_spec(mod) if mod else None
-    if found is None or not found.origin or not Path(found.origin).is_file():
-        raise SpecError(f"python runner {spec!r}: module file not found")
-    return _sha_file(Path(found.origin))
+    found = _sandbox.module_file(mod) if mod else None
+    if found is None:
+        raise SpecError(f"python runner {spec!r}: module source file not found")
+    return _sha_file(found)
 
 
 def _d3_scan(lines: list[str], recipes_dir: Path | None, later: list[dict] = ()) -> dict:
@@ -813,6 +819,25 @@ def frozen_inputs(run_dir: str | Path, input_type: str) -> FrozenInputs:
                         cpt["y_m"], pga, mh)
 
 
+def inputs_from_folder(folder: str | Path, input_type: str, manifest_sha256: str = "") -> FrozenInputs:
+    """What a sandboxed entry sees (ruling 59a): FrozenInputs built from one B4 /inputs/ folder and nothing else.
+
+    The event comes from /inputs/event.json, with the B4 names mapped back to the kit names (EVENT_JSON_FIELDS:
+    comcat_id -> id, origin_utc -> time_utc, mw -> mag, mw_type -> mag_type; lon, lat, depth_km). The watcher
+    fields of the input manifest (watch_status, watch_class_b) are not entry inputs and are absent here. The sandbox
+    child (evalkit.sandbox_child) calls this before the entry runs; the parent checks the folder against the frozen
+    table first (evalkit.sandbox)."""
+    d = Path(folder)
+    ej = json.loads((d / B4_EVENT).read_text(encoding="utf-8"))
+    event = {src: ej.get(b4) for b4, src in EVENT_JSON_FIELDS.items()}
+    cpt = read_cpt_list(d / B4_CPT)
+    if read_sites(d / B4_SITES) != cpt["site_ids"]:
+        raise RunRefused(f"type {input_type}: sites.csv and package/cpt_list.csv name other sites")
+    pga = read_grid(d / B4_GRID).sample(cpt["lat"], cpt["lon"])
+    return FrozenInputs(input_type, event, cpt["site_ids"], cpt["lat"], cpt["lon"], cpt["x_m"], cpt["y_m"], pga,
+                        manifest_sha256)
+
+
 def _builtin(name: str, inp: FrozenInputs, params: dict) -> np.ndarray:
     mw = float(params.get("mw", inp.event["mag"]))
     if name == "shaking_score":
@@ -824,22 +849,15 @@ def _builtin(name: str, inp: FrozenInputs, params: dict) -> np.ndarray:
     raise SpecError(f"unknown builtin runner {name!r}")
 
 
-def _run_entry(e: dict, inp: FrozenInputs) -> np.ndarray:
-    r = e["runner"]
-    params = dict(r.get("params") or {})
-    if r.get("kind") == "builtin":
-        p = _builtin(r.get("name"), inp, params)
-    elif r.get("kind") == "python":
-        mod, _, fn = str(r.get("callable", "")).partition(":")
-        if not mod or not fn:
-            raise SpecError(f"entry {e['name']!r}: python runner needs 'package.module:function'")
-        if not r.get("code_sha256"):
-            raise SpecError(f"entry {e['name']!r}: python runner needs code_sha256 (callable_sha256 of its module)")
-        if callable_sha256(r["callable"]) != r["code_sha256"]:
-            raise SpecError(f"entry {e['name']!r}: the module file changed after registration (code_sha256)")
-        p = getattr(importlib.import_module(mod), fn)(inp, **params)
-    else:
-        raise SpecError(f"entry {e['name']!r}: runner kind must be builtin or python")
+def _run_entry(e: dict, inp: FrozenInputs, run_dir: Path, manifest: dict, *, sandbox: str,
+               sandbox_opts: dict) -> np.ndarray:
+    """One run of one entry, in a new sandboxed process that sees only a copy of /inputs/ (ruling 59a; sandbox.py).
+
+    Raises sandbox.SandboxRefused when the entry tried to read outside /inputs/, write outside /outputs/, open a
+    socket or start a process; SpecError for a bad runner, a changed module file or a wrong result shape."""
+    p = _sandbox.run_entry(e, _inputs_dir(run_dir, inp.input_type), manifest["inputs"]["files"],
+                           input_type=inp.input_type, manifest_sha256=inp.manifest_sha256, mode=sandbox,
+                           **sandbox_opts)
     p = np.asarray(p, dtype=float)
     if p.shape != (len(inp.site_ids),):
         raise SpecError(f"entry {e['name']!r}: returned {p.shape}, needs one value per frozen site")
@@ -857,15 +875,27 @@ def _pred_dir(run_dir: Path, t: str) -> Path:
 
 
 def predict(run_dir: str | Path, register_path: str | Path, input_type: str, *,
-            recipes_dir: str | Path | None = None) -> dict:
+            recipes_dir: str | Path | None = None, sandbox: str = "process",
+            sandbox_opts: dict | None = None) -> dict:
     """Run every registered entry on one type's frozen inputs and log the predictions hash. Takes no labels.
 
     Refused when the type has predictions already, when its labels were already opened, when the register is not
     the one frozen in the input manifest, or when the other type already ran a different set of counted entries.
     LATE entries (intake less than 24 h before the origin) are not run. Each counted entry runs twice; one whose two
     runs differ by more than RERUN_TOL is RUN FAILED and is not saved. The predictions hash is sha256 of the
-    canonical JSON {input manifest hash, frozen register prefix hash, {entry name: R4 entry hash}, late, run failed}."""
+    canonical JSON {input manifest hash, frozen register prefix hash, {entry name: R4 entry hash}, late, run failed,
+    sandbox refused, sandbox}.
+
+    B4 sandbox (ruling 59a): each run is a new process (`sandbox="process"`, or `"container"` with
+    sandbox_opts={"image": ...}) that sees only a read-only copy of /inputs/ and writes only /outputs/. An entry that
+    tries to read outside /inputs/, write outside /outputs/, open a socket or start a process is SANDBOX REFUSED: it
+    is not run again, not saved and not scored, and the record lists it with the reason. There is no in-process mode.
+    `sandbox_opts` passes timeout_s, image, tmp_root and allow_audit_only to sandbox.run_entry. Fail closed (review
+    1, S1): with no kernel layer (sandbox-exec cannot start) process mode is refused before anything is written,
+    unless sandbox_opts has allow_audit_only=True; the record then says the audit layer ran alone."""
     t = _type(input_type)
+    opts = dict(sandbox_opts or {})
+    lay = _sandbox.layers(sandbox, allow_audit_only=bool(opts.get("allow_audit_only", False)))
     run_dir = Path(run_dir)
     log = read_log(run_dir)
     if any(d["step"] == "labels_opened" for d in log):
@@ -888,9 +918,14 @@ def predict(run_dir: str | Path, register_path: str | Path, input_type: str, *,
             raise RunRefused(f"types {other[0]} and {t} must run the same counted entries")
     d = _pred_dir(run_dir, t)
     d.mkdir(parents=True, exist_ok=True)
-    hashes, failed = {}, []
+    hashes, failed, refused = {}, [], []
     for e in counted:
-        p1, p2 = _run_entry(e, inp), _run_entry(e, inp)
+        try:
+            p1 = _run_entry(e, inp, run_dir, manifest, sandbox=sandbox, sandbox_opts=opts)
+            p2 = _run_entry(e, inp, run_dir, manifest, sandbox=sandbox, sandbox_opts=opts)
+        except _sandbox.SandboxRefused as exc:
+            refused.append({**exc.record(), "register_entry_sha256": e["entry_sha256"]})
+            continue
         same_nan = np.array_equal(np.isnan(p1), np.isnan(p2))
         diff = np.nanmax(np.abs(p1 - p2)) if same_nan and np.isfinite(p1).any() else 0.0
         if not same_nan or diff > RERUN_TOL:
@@ -904,19 +939,20 @@ def predict(run_dir: str | Path, register_path: str | Path, input_type: str, *,
                                                                                    d / f"{stem}.csv")),
                              "register_entry_sha256": e["entry_sha256"], "intake_utc": e["intake_utc"]}
     if not hashes:
-        raise RunRefused(f"type {t}: no entry counts for this earthquake (LATE {len(late)}, RUN FAILED {len(failed)})")
+        raise RunRefused(f"type {t}: no entry counts for this earthquake (LATE {len(late)}, RUN FAILED {len(failed)}, "
+                         f"SANDBOX REFUSED {len(refused)})")
     rec = {"schema": SCHEMA_PREDICTIONS, "input_type": t, "input_manifest_sha256": inp.manifest_sha256,
            "register_sha256": reg_sha, "origin_utc": inp.event["time_utc"], "entries": hashes,
            "counted_register_entries": sorted(e["entry_sha256"] for e in counted),
            "late": [{"name": e["name"], "register_entry_sha256": e["entry_sha256"], "intake_utc": e["intake_utc"]}
                     for e in late] + scan["after_freeze"],
-           "run_failed": failed}
+           "run_failed": failed, "sandbox_refused": refused, "sandbox": lay.record()}
     if scan["skipped"] is not None:      # D3 layout only, so an interim record keeps its old shape
         rec["register_skipped"] = scan["skipped"]
     ph = _sha_json(rec)
     (d / "predictions.json").write_text(json.dumps(rec, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     _append(run_dir, "predictions_written", t, ph, n_entries=len(hashes), n_sites=len(inp.site_ids),
-            n_late=len(late), n_run_failed=len(failed))
+            n_late=len(late), n_run_failed=len(failed), n_sandbox_refused=len(refused))
     return {"predictions_sha256": ph, "record": rec}
 
 
@@ -959,7 +995,7 @@ TASK_FIELDS_FROM_CALLER = ("target", "label_source", "label_rule_sha256", "tile_
 
 
 def score(run_dir: str | Path, labels_path: str | Path, input_type: str, task_params: dict, *,
-          card_kwargs: dict | None = None) -> dict:
+          card_kwargs: dict | None = None, card_version: str = "later") -> dict:
     """Score one type's predictions on the arrived labels. The label file is opened only after every check passes.
 
     `task_params` gives the task fields the runner cannot know (TASK_FIELDS_FROM_CALLER, plus optional Task fields
@@ -970,9 +1006,9 @@ def score(run_dir: str | Path, labels_path: str | Path, input_type: str, task_pa
     /inputs/), with the sha256 the input manifest froze; package_sha256 is the sha256 of that table. The table is
     written as `scores/<type>/package_table.csv`, so `python -m scoreboard.evalkit.package check TABLE inputs/<type>`
     checks the frozen inputs against it with nothing left over. An open task names no package hash.
-    Limit (D5 follow-ups review 1): clip, tile_m and seed still come from the caller, not from task_pins.json
-    (rule book v1 amendment 1); this runner does not refuse a value that differs from the pins. Filling them from
-    task_builder.load_pins waits for the go on amendment 1 section 5.3 point 4.
+    Pin check (amended R2; ruling 59a, wave 13): clip, tile_m, seed and tile_rule must equal task_pins.json for
+    `card_version` (default "later": a forward card is a later card version); a task off its pins is refused before
+    the label file is opened (task_builder.check_pins). The caller still gives them; they are checked, not filled.
     Returns the card (evalkit.card.build_card) with a `forward` block naming the input type and every hash."""
     from .card import build_card  # late import: the card module is heavy and not needed to freeze or predict
 
@@ -1000,6 +1036,10 @@ def score(run_dir: str | Path, labels_path: str | Path, input_type: str, task_pa
     task = Task.from_dict({**task_params, "event_id": manifest["event"]["id"],
                            "site_list_sha256": manifest["sites"]["site_list_sha256"], "track": "forward",
                            "division": division, **pkg})
+    try:                                                 # scorer-side pin check, before any label byte
+        _task_builder.check_pins(task, card_version)
+    except SpecError as exc:
+        raise RunRefused(f"type {t}: {exc}") from None
     raw = Path(labels_path).read_bytes()                 # first open of the label file
     lh = _sha_bytes(raw)
     first = [d for d in read_log(run_dir) if d["step"] == "labels_opened"]
@@ -1013,6 +1053,9 @@ def score(run_dir: str | Path, labels_path: str | Path, input_type: str, task_pa
     card["forward"] = {"rule": "R21", "input_type": t, "input_type_meaning": INPUT_TYPES[t],
                        "input_manifest_sha256": mh, "predictions_sha256": _sha_json(rec),
                        "late": rec.get("late", []), "run_failed": rec.get("run_failed", []),
+                       "sandbox_refused": rec.get("sandbox_refused", []), "sandbox": rec.get("sandbox"),
+                       "pins_checked": {"card_version": card_version,
+                                        "pins": _task_builder.load_pins(card_version)},
                        "register_skipped": rec.get("register_skipped"),
                        "labels_file_sha256": lh, "scored_apart": "type A and type B are separate cards, never pooled",
                        "package_sha256": task.package_sha256,

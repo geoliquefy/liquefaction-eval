@@ -21,6 +21,7 @@ from .gates import run_gates
 from .spec import (Entry, EntryManifest, SpecError, card_sha256, load_card_sha256, load_entry, load_labels,
                    load_predictions, load_task)
 from .synth import demo_inputs
+from .task_builder import check_pins
 
 
 def load_entries(directory: str | Path) -> list[Entry]:
@@ -68,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--shaking-only")
     sc.add_argument("--registered-task-sha256")
     sc.add_argument("--losses-first", action="store_true", help="put the house LOSS block first (B1)")
+    sc.add_argument("--card-version", help="refuse a task whose clip, tile_m, seed or tile_rule differs from "
+                                           "task_pins.json for this card version (v2, v3, v3.1, later; amended R2)")
     sc.add_argument("--require-house-proper-score", action="store_true",
                     help="refuse a house other_probability row with no declared target and no conversion (B1)")
     dm = sub.add_parser("demo", help="build a card from the built-in synthetic earthquake")
@@ -89,6 +92,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.cmd == "score":
             task = load_task(a.task)
+            if a.card_version:                   # scorer-side pin check before the label file (ruling 59a)
+                check_pins(task, a.card_version)
+            else:                                # review 1, N2: make the gap visible
+                print("evalkit score: WARNING: no --card-version, so the task's clip, tile_m, seed and tile_rule "
+                      "are NOT checked against task_pins.json (ruling 59a); pass --card-version to check them",
+                      file=sys.stderr)
             labels = load_labels(a.labels)
             shaking = _shaking_only(a.shaking_only, task.event_id) if a.shaking_only else None
             card = build_card(task, load_entries(a.entries), labels, shaking_only=shaking,

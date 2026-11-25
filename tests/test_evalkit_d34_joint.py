@@ -30,7 +30,7 @@ ORIGIN = "2030-01-01T00:00:00Z"
 FLAG = {"id": EV, "time_utc": ORIGIN, "mag": 6.6, "mag_type": "mww", "lat": -40.0, "lon": 175.0, "depth_km": 9.0,
         "status": "CANDIDATE", "class_b": {"flag": "-"}}
 TASK = {"target": "surface manifestation", "label_source": "PLANTED synthetic (d34 joint test)",
-        "label_rule_sha256": "0" * 64, "tile_m": 1000.0, "clip": 1e-3, "seed": 5,
+        "label_rule_sha256": "0" * 64, "tile_m": 4000.0, "clip": 1e-6, "seed": 20261106,
         "label_caveats": "PLANTED labels; a pipeline test, not a result", "n_boot": 60, "min_sites": 50,
         "min_per_class": 10, "min_tiles": 5}
 

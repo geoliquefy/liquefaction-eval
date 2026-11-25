@@ -2,7 +2,9 @@
 
 The tests below read private driver scripts or a private data-source list that
 this read-only mirror does not hold. They are skipped here, by name, with the
-reason. Every other kit test file is byte-identical to kit commit d5f3983.
+reason. Every other kit test file is byte-identical to kit commit a6a1969,
+except tests/test_evalkit_site.py, which stays at kit commit d5f3983 with the
+site code (README difference 9).
 """
 import pytest
 

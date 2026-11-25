@@ -105,6 +105,20 @@ def _same(given, pin) -> bool:
     return isinstance(given, (int, float)) and float(given) == float(pin)
 
 
+def check_pins(task: Task | Mapping, card_version: str = DEFAULT_CARD_VERSION) -> None:
+    """The scorer-side pin check (amended R2, rule book v1 amendment 1; ruling 59a): refuse a task whose clip,
+    tile_m, seed or tile_rule differs from task_pins.json for its card version. A Task or a task mapping; a field the
+    mapping leaves out is refused too (a scored task names all of them)."""
+    d = task.to_dict() if isinstance(task, Task) else dict(task)
+    pins = load_pins(card_version)
+    bad = [f"{k} {d.get(k, '(missing)')!r} (pinned {pin!r})" for k, pin in pins.items()
+           if k not in d or not _same(d[k], pin)]
+    if bad:
+        raise SpecError(f"scorer: the task is off its pins for card version {card_version!r}: {'; '.join(bad)} "
+                        f"(rule book v1 amendment 1, section 4; amended R2: the scorer refuses a task whose clip, "
+                        f"tile_m or seed differs from the pinned value of its card version)")
+
+
 def build_task(fields: Mapping, *, package_table: str | Path | None = None,
                card_version: str = DEFAULT_CARD_VERSION) -> Task:
     """A checked Task from the caller's fields, the committed pins and (closed division) the package table.
